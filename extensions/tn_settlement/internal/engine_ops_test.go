@@ -713,6 +713,7 @@ func TestIsPermanentSettleError(t *testing.T) {
 		{"numeric market empty payload (368 analog)", errors.New("transaction failed with code 65535: result payload contains no values"), true},
 		{"numeric market malformed payload", errors.New("transaction failed with code 65535: failed to decode ABI result payload: bad"), true},
 		{"numeric market wrong array count", errors.New("expected 2 arrays (timestamps, values), got 1"), true},
+		{"outcome market malformed result", errors.New("transaction failed with code 65535: outcome action result must be 1e18, 0 or -1e18, got 2000000000000000000"), true},
 		{"nonce conflict is transient", errors.New("invalid nonce: expected 5 got 4"), false},
 		{"network/broadcast is transient", errors.New("broadcast tx: connection refused"), false},
 		{"unrelated action revert stays transient (conservative)", errors.New("transaction failed with code 1: insufficient collateral"), false},
@@ -759,6 +760,30 @@ func TestBroadcastSettleMarketWithRetry_PermanentFailureStopsImmediately(t *test
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrPermanentSettleFailure)
 	require.Equal(t, 1, broadcaster.attempts, "a permanent failure must be attempted exactly once (no retries)")
+}
+
+// A v2 market (ids 13-16) whose signed result the outcome parser refuses fails
+// the same way on every attempt, so it is quarantined like a malformed binary
+// result rather than retried every poll.
+func TestBroadcastSettleMarketWithRetry_OutcomeResultErrorIsPermanent(t *testing.T) {
+	broadcaster := &mockBroadcaster{
+		failUntil: 10,
+		successResult: &ktypes.TxResult{
+			Code: 65535,
+			Log:  "ERROR: outcome action result must be 1e18, 0 or -1e18, got 2000000000000000000",
+		},
+	}
+	priv, _, err := crypto.GenerateSecp256k1Key(nil)
+	require.NoError(t, err)
+	ops := &EngineOperations{logger: log.DiscardLogger, accounts: &mockAccounts{}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = ops.BroadcastSettleMarketWithRetry(ctx, "test-chain", auth.GetUserSigner(priv), broadcaster.broadcast, 500, 3)
+
+	require.ErrorIs(t, err, ErrPermanentSettleFailure)
+	require.Equal(t, 1, broadcaster.attempts)
 }
 
 // =============================================================================

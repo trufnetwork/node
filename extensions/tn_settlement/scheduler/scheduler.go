@@ -72,6 +72,18 @@ type SettlementScheduler struct {
 	// re-probes once and re-quarantines if still permanent. Protected by quarantineMu.
 	quarantine   map[int]time.Time
 	quarantineMu sync.Mutex
+
+	// captureRequests maps the query_id of a market still waiting for its
+	// capture to the time of its last accepted request_attestation. Past the
+	// first hour it limits the market to one request per CaptureBackoffSlot.
+	// Same lifetime as quarantine: in-memory and leader-local, so a restart or
+	// a new leader requests each waiting market once and then follows the slots
+	// again. Protected by captureRequestsMu.
+	captureRequests   map[int]time.Time
+	captureRequestsMu sync.Mutex
+
+	// now is the scheduler's clock; tests replace it to step through slots.
+	now func() time.Time
 }
 
 type NewSettlementSchedulerParams struct {
@@ -106,6 +118,8 @@ func NewSettlementScheduler(params NewSettlementSchedulerParams) *SettlementSche
 		retryAttempts:    retries,
 		processingGuard:  params.ProcessingGuard,
 		quarantine:       make(map[int]time.Time),
+		captureRequests:  make(map[int]time.Time),
+		now:              time.Now,
 	}
 }
 
@@ -147,6 +161,67 @@ func (s *SettlementScheduler) quarantineCount() int {
 	s.quarantineMu.Lock()
 	defer s.quarantineMu.Unlock()
 	return len(s.quarantine)
+}
+
+// captureRequestDue reports whether an uncaptured market should be requested on
+// this poll. Within CaptureFullPollWindow of settle_time it always is. After
+// that the time since settle_time is cut into CaptureBackoffSlot slots, and the
+// market is due once per slot: when its last accepted request was before the
+// start of the current slot. The answer depends only on settle_time, now and
+// the last request, so books that share a settle_time become due together.
+// When the market is not due, nextAt is the start of the next slot.
+func (s *SettlementScheduler) captureRequestDue(market *internal.UnsettledMarket, now time.Time) (due bool, nextAt time.Time) {
+	settle := time.Unix(market.SettleTime, 0)
+	age := now.Sub(settle)
+	if age < CaptureFullPollWindow {
+		return true, time.Time{}
+	}
+	slotStart := settle.Add(age.Truncate(CaptureBackoffSlot))
+
+	s.captureRequestsMu.Lock()
+	last, ok := s.captureRequests[market.ID]
+	s.captureRequestsMu.Unlock()
+
+	if !ok || last.Before(slotStart) {
+		return true, time.Time{}
+	}
+	return false, slotStart.Add(CaptureBackoffSlot)
+}
+
+// recordCaptureRequest notes an accepted request_attestation for a market.
+func (s *SettlementScheduler) recordCaptureRequest(queryID int, at time.Time) {
+	s.captureRequestsMu.Lock()
+	defer s.captureRequestsMu.Unlock()
+	s.captureRequests[queryID] = at
+}
+
+// clearCaptureRequest drops a market's request record once its capture is seen
+// or it settles.
+func (s *SettlementScheduler) clearCaptureRequest(queryID int) {
+	s.captureRequestsMu.Lock()
+	defer s.captureRequestsMu.Unlock()
+	delete(s.captureRequests, queryID)
+}
+
+// pruneCaptureRequests drops records older than CaptureBackoffPruneAfter, which
+// belong to markets that left the due list without a capture being seen here.
+func (s *SettlementScheduler) pruneCaptureRequests(now time.Time) {
+	s.captureRequestsMu.Lock()
+	defer s.captureRequestsMu.Unlock()
+	cutoff := now.Add(-CaptureBackoffPruneAfter)
+	for id, at := range s.captureRequests {
+		if at.Before(cutoff) {
+			delete(s.captureRequests, id)
+		}
+	}
+}
+
+// captureRequestCount bounds how many fetched rows a cycle may skip for backoff,
+// so runSettlementCycle over-fetches by it, as it does for quarantine.
+func (s *SettlementScheduler) captureRequestCount() int {
+	s.captureRequestsMu.Lock()
+	defer s.captureRequestsMu.Unlock()
+	return len(s.captureRequests)
 }
 
 func (s *SettlementScheduler) SetSigner(sig auth.Signer) {
@@ -217,7 +292,7 @@ func (s *SettlementScheduler) Start(ctx context.Context, cronExpr string) error 
 			"max_markets", maxMarkets,
 			"retry_attempts", retries)
 
-		settled, failed, skipped, err := s.runSettlementCycle(
+		settled, failed, skipped, backingOff, err := s.runSettlementCycle(
 			jobCtx, engineOps, broadcaster, signer, chainID, maxMarkets, retries)
 		if err != nil {
 			// Query error and cancellation are already logged inside the cycle.
@@ -227,12 +302,13 @@ func (s *SettlementScheduler) Start(ctx context.Context, cronExpr string) error 
 		// Only emit the completion summary when markets were actually processed;
 		// an idle poll already logged a Debug line and would otherwise spam an
 		// Info line every poll interval.
-		if settled+failed+skipped > 0 {
+		if settled+failed+skipped+backingOff > 0 {
 			s.logger.Info("settlement job completed",
-				"total_markets", settled+failed+skipped,
+				"total_markets", settled+failed+skipped+backingOff,
 				"settled", settled,
 				"failed", failed,
-				"skipped", skipped)
+				"skipped", skipped,
+				"backing_off", backingOff)
 		}
 	}
 
@@ -278,8 +354,14 @@ func (s *SettlementScheduler) Stop() error {
 // Markets whose settlement PERMANENTLY fails (ErrPermanentSettleFailure — e.g. an
 // immutable, malformed attestation) are quarantined and skipped on later cycles
 // so the scheduler stops re-broadcasting a tx that reverts identically forever
-// (which burns nonces and commits failed txs to blocks). Returns per-cycle
-// counts; err is non-nil only for a query failure or context cancellation.
+// (which burns nonces and commits failed txs to blocks).
+//
+// A market still uncaptured an hour past its settle time is requested at most
+// once per hour slot (captureRequestDue). Its capture status is still read on
+// every poll, so a capture taken by anyone settles it on the next one.
+//
+// Returns per-cycle counts; backingOff counts the uncaptured markets left for a
+// later slot. err is non-nil only for a query failure or context cancellation.
 func (s *SettlementScheduler) runSettlementCycle(
 	ctx context.Context,
 	engineOps EngineOps,
@@ -287,21 +369,28 @@ func (s *SettlementScheduler) runSettlementCycle(
 	signer auth.Signer,
 	chainID string,
 	maxMarkets, retries int,
-) (settled, failed, skipped int, err error) {
-	// Over-fetch by the number of quarantined markets. FindUnsettledMarkets returns
-	// oldest-first, so a quarantined older market would otherwise fill a limited page
-	// ahead of a newer, settleable one and starve it. Requesting maxMarkets plus the
-	// quarantine count guarantees the page still holds up to maxMarkets non-quarantined
-	// markets (len(quarantine) is a safe upper bound on how many rows we may skip).
-	markets, err := engineOps.FindUnsettledMarkets(ctx, maxMarkets+s.quarantineCount())
+) (settled, failed, skipped, backingOff int, err error) {
+	// One clock reading per cycle. Every book of a ladder is judged and recorded
+	// at the same instant, so a pass that straddles a slot boundary cannot put
+	// two books of one ladder in different slots.
+	now := s.now()
+	s.pruneCaptureRequests(now)
+
+	// Over-fetch by the number of quarantined markets and of request records.
+	// FindUnsettledMarkets returns oldest-first, so a quarantined or backing-off
+	// older market would otherwise fill a limited page ahead of a newer, settleable
+	// one and starve it. Neither kind can be skipped without an entry in its map,
+	// so the two map sizes together are a safe upper bound on the rows we may skip,
+	// and the page still holds up to maxMarkets markets that use the budget.
+	markets, err := engineOps.FindUnsettledMarkets(ctx, maxMarkets+s.quarantineCount()+s.captureRequestCount())
 	if err != nil {
 		s.logger.Error("failed to query unsettled markets", "error", err)
-		return 0, 0, 0, fmt.Errorf("query unsettled markets: %w", err)
+		return 0, 0, 0, 0, fmt.Errorf("query unsettled markets: %w", err)
 	}
 
 	if len(markets) == 0 {
 		s.logger.Debug("no unsettled markets found")
-		return 0, 0, 0, nil
+		return 0, 0, 0, 0, nil
 	}
 
 	s.logger.Info("found unsettled markets", "count", len(markets))
@@ -318,14 +407,15 @@ func (s *SettlementScheduler) runSettlementCycle(
 	// means no settlement committed by this cycle can change the answer for a
 	// market later in the same list.
 	//
-	// processed counts the non-quarantined markets handled this cycle — it is the
-	// maxMarkets budget. Quarantine skips do NOT consume it, so a quarantined market
-	// cannot crowd out settleable ones.
+	// processed counts the markets handled this cycle — it is the maxMarkets
+	// budget. Quarantine skips and backoff skips do NOT consume it, so a
+	// quarantined market or a market waiting out its slot cannot crowd out
+	// settleable ones.
 	var toCapture, toSettle []*internal.UnsettledMarket
 	processed := 0
 	for _, market := range markets {
-		// Stop once the budget of non-quarantined markets is met; any remaining
-		// fetched rows are only the over-fetch headroom.
+		// Stop once the budget is met; any remaining fetched rows are only the
+		// over-fetch headroom.
 		if processed >= maxMarkets {
 			break
 		}
@@ -336,8 +426,9 @@ func (s *SettlementScheduler) runSettlementCycle(
 			s.logger.Info("settlement cycle cancelled",
 				"settled", settled,
 				"failed", failed,
-				"skipped", skipped)
-			return settled, failed, skipped, ctx.Err()
+				"skipped", skipped,
+				"backing_off", backingOff)
+			return settled, failed, skipped, backingOff, ctx.Err()
 		default:
 		}
 
@@ -350,10 +441,9 @@ func (s *SettlementScheduler) runSettlementCycle(
 			continue
 		}
 
-		processed++
-
 		capture, attErr := engineOps.CaptureStatusFor(ctx, market.Hash, market.SettleTime)
 		if attErr != nil {
+			processed++
 			s.logger.Warn("failed to check attestation",
 				"query_id", market.ID,
 				"error", attErr)
@@ -363,9 +453,13 @@ func (s *SettlementScheduler) runSettlementCycle(
 
 		switch {
 		case capture.Signed:
+			processed++
+			s.clearCaptureRequest(market.ID)
 			toSettle = append(toSettle, market)
 
 		case capture.Captured:
+			processed++
+			s.clearCaptureRequest(market.ID)
 			// Captured, waiting on a validator signature. Do not ask for
 			// another: the signature arrives in a later block, and a second
 			// request would capture the query again against whatever chain
@@ -383,6 +477,17 @@ func (s *SettlementScheduler) runSettlementCycle(
 			skipped++
 
 		default:
+			// Only the request is rate-limited; the status read above runs on
+			// every poll. A backoff skip does not consume the budget.
+			if due, nextAt := s.captureRequestDue(market, now); !due {
+				s.logger.Debug("capture not yet taken; waiting for the next hourly request slot",
+					"query_id", market.ID,
+					"settle_time", market.SettleTime,
+					"next_request_at", nextAt.UTC().Format(time.RFC3339))
+				backingOff++
+				continue
+			}
+			processed++
 			toCapture = append(toCapture, market)
 		}
 	}
@@ -399,8 +504,9 @@ func (s *SettlementScheduler) runSettlementCycle(
 				s.logger.Info("settlement cycle cancelled",
 					"settled", settled,
 					"failed", failed,
-					"skipped", skipped)
-				return settled, failed, skipped, ctx.Err()
+					"skipped", skipped,
+					"backing_off", backingOff)
+				return settled, failed, skipped, backingOff, ctx.Err()
 			default:
 			}
 
@@ -408,8 +514,10 @@ func (s *SettlementScheduler) runSettlementCycle(
 				// Stop the pass rather than carry on. The nonce sequence is no
 				// longer known to be good, and re-broadcasting part of a ladder
 				// now would capture the rest of it in a later block — the split
-				// this ordering exists to prevent. The next poll requests
-				// everything still missing, together.
+				// this ordering exists to prevent. In the first hour the next
+				// poll requests everything still missing, together. Past it, the
+				// books already requested in this pass wait for the next slot,
+				// where the whole ladder is due together again.
 				abandoned := len(toCapture) - i - 1
 				s.logger.Warn("failed to request attestation; abandoning the rest of this cycle's captures",
 					"query_id", market.ID,
@@ -420,6 +528,9 @@ func (s *SettlementScheduler) runSettlementCycle(
 				break
 			}
 
+			// Recorded at the cycle's clock reading, not the accept time, so
+			// every book of a ladder requested in this pass shares one slot.
+			s.recordCaptureRequest(market.ID, now)
 			s.logger.Info("attestation requested successfully", "query_id", market.ID)
 			skipped++ // Will settle on a later run, once signed
 		}
@@ -433,8 +544,9 @@ func (s *SettlementScheduler) runSettlementCycle(
 			s.logger.Info("settlement cycle cancelled",
 				"settled", settled,
 				"failed", failed,
-				"skipped", skipped)
-			return settled, failed, skipped, ctx.Err()
+				"skipped", skipped,
+				"backing_off", backingOff)
+			return settled, failed, skipped, backingOff, ctx.Err()
 		default:
 		}
 
@@ -451,6 +563,7 @@ func (s *SettlementScheduler) runSettlementCycle(
 		case settleErr == nil:
 			s.logger.Info("market settled successfully", "query_id", market.ID)
 			s.clearQuarantine(market.ID)
+			s.clearCaptureRequest(market.ID)
 			settled++
 		case errors.Is(settleErr, internal.ErrPermanentSettleFailure):
 			// Deterministic failure — will recur identically. Quarantine so it is
@@ -471,7 +584,7 @@ func (s *SettlementScheduler) runSettlementCycle(
 		}
 	}
 
-	return settled, failed, skipped, nil
+	return settled, failed, skipped, backingOff, nil
 }
 
 // RunOnce executes the settlement job payload once (for tests and manual triggering)
@@ -502,6 +615,6 @@ func (s *SettlementScheduler) RunOnce(ctx context.Context) error {
 	}
 	chainID := kwilService.GenesisConfig.ChainID
 
-	_, _, _, err := s.runSettlementCycle(ctx, engineOps, broadcaster, signer, chainID, maxMarkets, retries)
+	_, _, _, _, err := s.runSettlementCycle(ctx, engineOps, broadcaster, signer, chainID, maxMarkets, retries)
 	return err
 }
