@@ -2,6 +2,7 @@ package tn_utils
 
 import (
 	"reflect"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -574,4 +575,32 @@ func TestForceLastArgFalseHandler(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "args_bytes must be []byte")
 	})
+}
+
+func TestDecodeActionArgsRefusesCountsAndLengthsPastTheData(t *testing.T) {
+	cases := map[string][]byte{
+		"max count, no args":       {0xff, 0xff, 0xff, 0xff},
+		"count past the data":      {0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+		"max length, no bytes":     {0x01, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff},
+		"length one past the data": {0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00},
+	}
+	for name, payload := range cases {
+		t.Run(name, func(t *testing.T) {
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			args, err := DecodeActionArgs(payload)
+			runtime.ReadMemStats(&after)
+			require.Error(t, err)
+			require.Nil(t, args)
+			// Without the bounds the max count asks for 64 GiB, a fatal out-of-memory on a host that refuses it.
+			require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(1<<20), "decoder allocated past the payload size")
+		})
+	}
+
+	// A valid payload still decodes the same way.
+	encoded, err := EncodeActionArgs([]any{"0xabc", int64(7), nil})
+	require.NoError(t, err)
+	decoded, err := DecodeActionArgs(encoded)
+	require.NoError(t, err)
+	require.Len(t, decoded, 3)
 }
