@@ -54,7 +54,7 @@ Actions that return more than one row, such as `get_record` and `get_index`, are
 
 ### Outcome actions (ids 13 to 16)
 
-These actions settle prediction markets and always end them: YES, NO, or INVALID when the print has not arrived by the deadline. Each returns one row, `(event_time INT8, value NUMERIC(36,18))`, with `value` `1` (YES), `0` (NO) or `-1` (INVALID), encoded like any numeric result.
+These actions settle prediction markets and always end them: YES, NO, or INVALID when a capture taken at or after the deadline finds no record. Each returns one row, `(event_time INT8, value NUMERIC(36,18))`, with `value` `1` (YES), `0` (NO) or `-1` (INVALID), encoded like any numeric result.
 
 | id | action | args |
 |---|---|---|
@@ -63,7 +63,7 @@ These actions settle prediction markets and always end them: YES, NO, or INVALID
 | 15 | `price_below_threshold_v2` | `data_provider, stream_id, timestamp, window, tolerance, threshold` |
 | 16 | `value_in_range_v2` | `data_provider, stream_id, timestamp, window, tolerance, min_value, max_value` |
 
-`timestamp` (T), `window` (W), `tolerance` and `time_interval` are INT8 seconds; thresholds and bounds are `NUMERIC(36,18)`, and a NULL bound leaves that tail open. `tolerance` bounds the event time of the record read, and `W` bounds block time. A request before block time T fails, so a market whose settle time is before T still resolves on the value as of T. From T, while no record qualifies, a request fails until `T + W`, and from then on it returns INVALID.
+`timestamp` (T), `window` (W), `tolerance` and `time_interval` are INT8 seconds; thresholds and bounds are `NUMERIC(36,18)`, and a NULL bound leaves that tail open. `tolerance` bounds the event time of the record read, and `W` bounds block time. A request before block time T fails, so a market whose settle time is before T still resolves on the value as of T. From T, while no record qualifies, a request fails until `T + W`, and from then on it returns INVALID. The rule applies at capture time: a record written after `T + W` but before the first capture still decides the market, because a record's write time is a block height, not a time. The settlement job captures within an hour of the deadline.
 
 These actions read primitive streams only. A missing, deleted or composed stream reads as no record. Read permissions are not checked, as in `price_above_threshold` and the other id 6 to 9 actions, so every requester gets the same answer; the attestation publishes only the outcome and the event time of the record it used.
 
