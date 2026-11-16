@@ -95,6 +95,12 @@ func DecodeActionArgs(data []byte) ([]any, error) {
 		return nil, fmt.Errorf("failed to read arg count: %w", err)
 	}
 
+	// The count and lengths come from the caller. Check them against the bytes present
+	// before allocating, so a short payload cannot ask for gigabytes.
+	if uint64(argCount) > uint64(buf.Len())/4 {
+		return nil, fmt.Errorf("arg count %d does not fit in %d bytes", argCount, buf.Len())
+	}
+
 	args := make([]any, argCount)
 
 	// Decode each argument
@@ -103,6 +109,9 @@ func DecodeActionArgs(data []byte) ([]any, error) {
 		var argLen uint32
 		if err := binary.Read(buf, binary.LittleEndian, &argLen); err != nil {
 			return nil, fmt.Errorf("failed to read arg %d length: %w", i, err)
+		}
+		if uint64(argLen) > uint64(buf.Len()) {
+			return nil, fmt.Errorf("arg %d length %d exceeds the %d bytes left", i, argLen, buf.Len())
 		}
 
 		// Read argument bytes
