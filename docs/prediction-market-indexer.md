@@ -69,7 +69,7 @@ Returns a list of prediction markets with their settlement results.
 | `query_hash` | Deterministic hash of market parameters |
 | `settle_time` | Unix timestamp when market is scheduled to settle |
 | `settled` | Whether the market has been settled |
-| `winning_outcome` | `true` = YES won, `false` = NO won, `null` = not settled |
+| `winning_outcome` | `true` = YES won, `false` = NO won, `null` = not settled yet, or, with `settled` true, refunded with no winner (every share paid $0.50, open buys returned) |
 | `settled_at` | Unix timestamp when settlement occurred |
 | `created_at` | Block height when the market was created |
 | `creator` | Wallet address of market creator (hex, lowercase) |
