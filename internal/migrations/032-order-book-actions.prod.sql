@@ -96,6 +96,13 @@ CREATE OR REPLACE ACTION create_market(
     if NOT $market_action_allowed {
         ERROR('Action not allowed for attestation: ' || COALESCE($market_action, 'NULL'));
     }
+
+    -- An action the network owner has retired (migration 064) takes no new
+    -- markets. Markets already on it still settle: settle_market does not read
+    -- retired_market_actions.
+    for $row in SELECT 1 AS retired FROM retired_market_actions WHERE action_name = $market_action {
+        ERROR('Action ' || $market_action || ' is retired for new markets: use an outcome action, ids 13 to 16');
+    }
     tn_utils.validate_query_stream($header_data_provider, $header_stream_id, $query_args);
 
     -- The outcome actions (migration 063) end every market, as YES, NO or

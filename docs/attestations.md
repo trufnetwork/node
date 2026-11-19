@@ -71,6 +71,15 @@ Requests and markets with other arguments are refused: every arg present with th
 
 Consumers read the outcome with `tn_utils.parse_attestation_outcome(result_canonical)`, which returns `1`, `0` or `-1`. `parse_attestation_boolean` refuses these ids.
 
+Once markets are created on these actions, the network owner can stop new markets on the versions they replace by listing them in `retired_market_actions` (migration 064); `create_market` refuses a listed action, and markets that already exist on it still settle:
+
+```sql
+INSERT INTO retired_market_actions (action_name) VALUES
+  ('price_above_threshold'), ('price_below_threshold'),
+  ('value_in_range'), ('index_change_in_range')
+ON CONFLICT (action_name) DO NOTHING;
+```
+
 ## Retrieving Attestations
 
 Call the `get_signed_attestation` action with the `request_tx_id` from your attestation request.
