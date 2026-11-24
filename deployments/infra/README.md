@@ -260,6 +260,19 @@ letters, digits, spaces and `._-:/()#,@[]+=&;{}!$*`, up to 200 characters.
 
 `lib/tn/security_group_test.go` pins the `prod` list, so change it there as well. Run `cdk diff` after changing the list.
 
+## RPC Request Timeout
+
+Each node's rendered `config.toml` sets `[rpc] timeout = '10s'` (`config/node/kwild-config.tmpl`), down from kwild's
+default of 20 s. Clients of these public RPC nodes commonly time out at 15 s, so with a 20 s limit a slow request can
+keep them waiting past their own timeout. At 10 s kwild answers a slow request with a timeout error before they give up.
+
+The limit applies to every RPC request, so a broadcast that waits for its transaction to commit is also cut at 10 s,
+before `broadcast_tx_timeout` (15 s) is reached.
+
+The launch template writes `config.toml` into the node's data directory at first boot only, so a node built from it
+gets the setting and a running node keeps its own file. On a running node, set the same line in its `config.toml` and
+restart kwild, or set `KWILD_RPC_TIMEOUT=10s` in the container environment, which overrides the file.
+
 ## Useful Commands
 
 - `cdk deploy`: Deploy this stack to your default AWS account/region
