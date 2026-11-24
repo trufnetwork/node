@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -167,6 +168,8 @@ func runFeeHistoryReadsScenario(t *testing.T, owner util.EthereumAddress) func(c
 		pages := [][2]any{
 			{20, 0}, {5, 0}, {5, 5}, {5, 10}, {3, 22}, {1000, 0}, {7, 100},
 			{0, 0}, {-1, -5}, {nil, nil},
+			// Offsets near the INT maximum, where offset + limit does not fit.
+			{20, int64(math.MaxInt64 - 20)}, {20, int64(math.MaxInt64 - 7)}, {1000, int64(math.MaxInt64)},
 		}
 
 		// Every wallet, mode and page returns what the 027 definition returns.

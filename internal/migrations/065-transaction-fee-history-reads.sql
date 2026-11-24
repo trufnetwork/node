@@ -100,8 +100,12 @@ CREATE OR REPLACE ACTION list_transaction_fees(
     $read_caller BOOL := $mode_normalized != 'received';
     $read_recipient BOOL := $mode_normalized != 'paid';
     -- The page ends at row offset + limit of the union, so neither branch
-    -- needs more rows than that.
-    $branch_limit INT := $limit_val + $offset_val;
+    -- needs more rows than that. INT addition wraps, so a sum past the INT
+    -- maximum reads the whole branch instead.
+    $branch_limit INT := 9223372036854775807;
+    IF $offset_val <= 9223372036854775807 - $limit_val {
+        $branch_limit := $limit_val + $offset_val;
+    }
 
     RETURN SELECT
         te.tx_id,
