@@ -124,7 +124,7 @@ probe() {
 # target: its URL, highest height and when that height first showed.
 check_network() {
 	local file=$STATE_DIR/network-state alerted_at=0 last_block=0 recovery=0
-	local url h at up v label spec stalled since down="" msg why
+	local url h at up v label spec stalled since down="" msg why best=0
 	local gw_h gw_at gw_up node_h=0 node_at=0 count=0 failing=0 gw_list="" node_list=""
 	local -a nodes=() urls=()
 	local -A seen_h=() seen_at=()
@@ -140,6 +140,12 @@ check_network() {
 	fi
 	for v in alerted_at last_block recovery; do
 		[[ ${!v} =~ ^[0-9]+$ ]] || printf -v "$v" '%s' 0
+	done
+	# The highest block any target showed before this run. An open outage
+	# closes only on a block above it, so a new or replaced target that shows
+	# an old height does not count as the network moving.
+	for h in ${seen_h[@]+"${seen_h[@]}"}; do
+		[ "$h" -le "$best" ] || best=$h
 	done
 
 	probe "$GATEWAY_RPC"
@@ -197,9 +203,10 @@ check_network() {
 			fi
 		fi
 	else
-		# A clock that stepped back makes every age look small again; an open
-		# outage stays open until the clock passes the last alert.
-		if [ "$alerted_at" -gt 0 ] && [ "$now" -ge "$alerted_at" ]; then
+		# Ages alone can look fresh without a new block (a replaced gateway
+		# address, a clock that stepped back), so an open outage closes only
+		# when some target shows a block above the best one seen before.
+		if [ "$alerted_at" -gt 0 ] && { [ "$gw_h" -gt "$best" ] || [ "$node_h" -gt "$best" ]; }; then
 			stalled=$(((now - last_block) / 60))
 			recovery=$((stalled > 0 ? stalled : 1))
 			alerted_at=0

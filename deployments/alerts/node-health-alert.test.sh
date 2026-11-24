@@ -210,6 +210,16 @@ at 10; sent "clock 25 min back: no OK"
 at 36; sent "clock back on time: nothing"
 at 50 gw=701; sent "real recovery: OK" "TN OK: blocks are moving again through the gateway, height 701, after 50 min."
 
+echo "# network, gateway only: its address changes during an outage"
+new_case "GATEWAY_RPC=$rpc/gw" NODE_CONTAINER=none STALL_MINUTES=35
+at 0 gw=800
+at 1 gw=-
+at 35; sent "DOWN" "TN DOWN: no new block through the gateway for 35 min, last height 800 seen at 09:00 UTC. The gateway is not answering."
+echo "GATEWAY_RPC=$rpc/gw2" >>"$case_dir/env"
+at 40 gw2=800; sent "new address at the old height: no OK"
+at 45; sent "still no new block: nothing"
+at 50 gw2=801; sent "a new block through the new address: OK" "TN OK: blocks are moving again through the gateway, height 801, after 50 min."
+
 echo "# network watch with a node check on the same host"
 new_case "${net[@]}" NODE_CONTAINER=tn-node "NODE_RPC=$rpc/local" NODE_ALERTS=journal
 at 0 gw=10 n1=10 n2=10 local=10
