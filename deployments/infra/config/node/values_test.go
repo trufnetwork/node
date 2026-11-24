@@ -97,4 +97,10 @@ func TestRenderKwildConfigTemplate(t *testing.T) {
 	require.True(t, ok, "DB section not found or not a map")
 	// DB.port is quoted in template so will be string
 	assert.Equal(t, fmt.Sprintf("%d", sampleValues.DB.Port), dbMap["port"], "DB port mismatch")
+
+	// RPC is unset, so the template's own default applies. It must match NewDefaultValues.
+	rpcMap, ok := parsedData["rpc"].(map[string]interface{})
+	require.True(t, ok, "RPC section not found or not a map")
+	assert.Equal(t, "10s", rpcMap["timeout"], "RPC timeout template default mismatch")
+	assert.Equal(t, "10s", NewDefaultValues().RPC.RequestTimeout, "RPC timeout default mismatch")
 }

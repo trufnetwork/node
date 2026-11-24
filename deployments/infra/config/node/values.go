@@ -147,10 +147,12 @@ func NewDefaultValues() Values {
 			ReadTimeout: "45s",
 			MaxConns:    60,
 		},
+		// RequestTimeout is 10s, not kwild's 20s: it stays below the 15s timeout
+		// common in clients, so a slow call is cut before they give up.
 		RPC: RPCConfig{
 			Port:             8484,
 			BroadcastTimeout: "15s",
-			RequestTimeout:   "20s",
+			RequestTimeout:   "10s",
 			MaxReqSize:       6000000,
 			Private:          false,
 			Compression:      true,

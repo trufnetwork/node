@@ -74,7 +74,8 @@ compression = true
 [rpc]
 listen               = '0.0.0.0:{{ default 8484  .RPC.Port }}'
 broadcast_tx_timeout = '{{ default "15s"  .RPC.BroadcastTimeout }}'
-timeout              = '{{ default "20s"  .RPC.RequestTimeout }}'
+# 10s, not kwild's 20s: below the 15s timeout common in clients. It also caps broadcasts that wait for commit.
+timeout              = '{{ default "10s"  .RPC.RequestTimeout }}'
 max_req_size         = {{   default 6_000_000 .RPC.MaxReqSize }}
 private              = {{   default false .RPC.Private }}
 compression          = {{   default true  .RPC.Compression }}
