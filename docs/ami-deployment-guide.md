@@ -260,19 +260,27 @@ sudo systemctl status tn-node
 
 ### Updates
 
+The node runs the release in `TN_NODE_TAG` in `/opt/tn/.env`. A new node runs the release the AMI was built with. To install another release, pass its tag from the [release page](https://github.com/trufnetwork/node/releases):
+
 ```bash
-# Update to latest Docker images
+# Run release v2.6.9: set TN_NODE_TAG, pull the image and recreate the node containers
+sudo tn-node-update v2.6.9
+
+# Without a tag, pull the release the node runs now
 sudo tn-node-update
 
-# Manual update process
-cd /opt/tn
-sudo -u tn docker compose pull
-sudo -u tn docker compose up -d --force-recreate
+# The release the node runs
+grep TN_NODE_TAG /opt/tn/.env
+docker exec tn-node ./kwild version
 
 # Check status after update
 sudo systemctl status tn-node
 docker ps
 ```
+
+`tn-node-update` pulls the image before it changes `.env`, so a tag that has no image leaves the node as it was. Postgres and the MCP server keep running, and the node restarts only when its image or configuration changed. When a release is required by a block, install it before that block; see [Required In-Place Upgrade](node-upgrade-guide.md#required-in-place-upgrade).
+
+An AMI built before `tn-node-update` took a tag runs `latest`, and its `tn-node-update` installs the newest release.
 
 ## Troubleshooting
 

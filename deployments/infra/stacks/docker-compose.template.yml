@@ -21,8 +21,10 @@ services:
   # Sets up the Postgres roles the node connects as. It runs before the node on
   # every start and is safe to run again. A new database takes TCP connections
   # only once the image has set it up, so it waits for that first.
+  # TN_NODE_TAG, the node release, comes from /opt/tn/.env. tn-node-configure
+  # writes the release the AMI was built with, and tn-node-update changes it.
   tn-postgres-roles:
-    image: ghcr.io/trufnetwork/node:latest
+    image: ghcr.io/trufnetwork/node:${TN_NODE_TAG:?run tn-node-update <release tag> to set it in /opt/tn/.env}
     container_name: tn-postgres-roles
     entrypoint: ["sh", "-c", "for i in $$(seq 60); do pg_isready --host=tn-postgres --username=postgres --quiet && break; sleep 1; done; exec psql --host=tn-postgres --username=postgres --no-psqlrc --set=ON_ERROR_STOP=1 --file=/app/postgres-roles.sql"]
     depends_on:
@@ -33,7 +35,7 @@ services:
     restart: "no"
 
   tn-node:
-    image: ghcr.io/trufnetwork/node:latest
+    image: ghcr.io/trufnetwork/node:${TN_NODE_TAG:?run tn-node-update <release tag> to set it in /opt/tn/.env}
     container_name: tn-node
     entrypoint: ""
     env_file:

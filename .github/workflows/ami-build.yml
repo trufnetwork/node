@@ -2,17 +2,18 @@
 name: Build AMI
 
 # This workflow should be triggered MANUALLY when AMI infrastructure needs updating.
-# Node software updates are handled automatically via Docker :latest tag.
+# The AMI runs the node release that is the latest release when it is built
+# (TN_NODE_TAG in /opt/tn/.env). Operators move a node to another release with
+# `sudo tn-node-update <release tag>`.
 #
 # When to rebuild AMI:
 #   ✅ Infrastructure changes (scripts, services, docker-compose)
 #   ✅ Base OS updates (Ubuntu patches)
 #   ✅ AWS Marketplace submission
-#   ✅ Major version releases
+#   ✅ Major version releases, so that new nodes start on them
 #
 # When NOT to rebuild:
-#   ❌ Regular node software updates (use Docker image workflow instead)
-#   ❌ Bug fixes (users get them via :latest tag)
+#   ❌ Regular node software updates (operators run tn-node-update)
 
 'on':
   workflow_dispatch:
@@ -57,10 +58,11 @@ jobs:
       - name: Get latest release version
         id: get-version
         run: |
-          # Get latest release tag from GitHub API
-          LATEST_VERSION=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')
+          # The latest published release; the AMI runs its node image.
+          LATEST_VERSION=$(gh release view --json tagName --jq '.tagName')
           if [ -z "$LATEST_VERSION" ]; then
-            LATEST_VERSION="manual"
+            echo "::error::No published release for the AMI to run"
+            exit 1
           fi
           echo "Latest release version: $LATEST_VERSION"
           echo "version=$LATEST_VERSION" >> "$GITHUB_OUTPUT"
@@ -85,6 +87,8 @@ jobs:
           cdk --version
 
       - name: Deploy/Update AMI pipeline infrastructure
+        env:
+          NODE_TAG: ${{ steps.get-version.outputs.version }}
         run: |
           cd deployments/infra
           echo "Destroying existing AMI pipeline to ensure fresh components..."
@@ -93,6 +97,7 @@ jobs:
           cdk destroy AMI-Pipeline-${{ env.STAGE }}-Stack \
             --app "go run ami-cdk.go" \
             --context stage=${{ env.STAGE }} \
+            --context nodeTag="$NODE_TAG" \
             --force || echo "Stack didn't exist or failed to destroy, continuing..."
 
           echo "Deploying fresh AMI pipeline infrastructure for stage: ${{ env.STAGE }}..."
@@ -102,6 +107,7 @@ jobs:
           cdk deploy AMI-Pipeline-${{ env.STAGE }}-Stack \
             --app "go run ami-cdk.go" \
             --context stage=${{ env.STAGE }} \
+            --context nodeTag="$NODE_TAG" \
             --require-approval never
 
           # Get pipeline ARN after deployment
@@ -237,7 +243,7 @@ jobs:
           echo "    https://aws.amazon.com/marketplace/management/products"
 
       - name: Update latest release with AMI details
-        if: env.AMI_ID && steps.get-version.outputs.version != 'manual'
+        if: env.AMI_ID
         uses: actions/github-script@v7
         env:
           VERSION: ${{ steps.get-version.outputs.version }}

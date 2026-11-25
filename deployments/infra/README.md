@@ -345,9 +345,11 @@ This directory contains infrastructure for automated AMI building using AWS EC2 
 cd deployments/infra
 
 # Deploy using isolated AMI CDK app (✅ Tested and Working)
+# nodeTag is the node release the AMI runs, a tag from https://github.com/trufnetwork/node/releases
 cdk --app 'go run ami-cdk.go' deploy \
   --context stage=dev \
   --context devPrefix=test-$(whoami) \
+  --context nodeTag=v2.6.8 \
   --require-approval never
 ```
 
@@ -402,8 +404,8 @@ curl http://localhost:8000/  # MCP server (returns 404 - normal)
 #### Update Node Images
 
 ```bash
-# On AMI instances, update to latest images
-sudo update-node
+# On AMI instances, install a node release by its tag
+sudo tn-node-update v2.6.9
 ```
 
 ### AMI Architecture
@@ -418,12 +420,13 @@ The AMI includes:
   - PostgreSQL MCP Server (crystaldba/postgres-mcp:latest) - Will need to be adjusted later on
 - **Configuration Scripts**:
   - `/usr/local/bin/tn-node-configure` - Initial setup
-  - `/usr/local/bin/update-node` - Update to latest images
+  - `/usr/local/bin/tn-node-update` - Install a node release by its tag
 - **SystemD Service**: `tn-node.service` for service management
 - **File Structure**:
   - `/opt/tn/` - Main application directory
   - `/opt/tn/docker-compose.yml` - Container orchestration
-  - `/opt/tn/.env` - Environment configuration
+  - `/opt/tn/.env` - Environment configuration, with the node release in `TN_NODE_TAG`
+  - `/opt/tn/ami-node-tag` - The node release the AMI was built with
 
 ### Local Testing
 

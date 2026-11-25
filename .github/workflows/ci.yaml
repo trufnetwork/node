@@ -53,7 +53,7 @@ jobs:
         with:
           node-version: '20'
       - name: Run infra tests
-        run: go test -count=1 ./config/ ./config/node/ ./lib/tn/ ./lib/constructs/validator_set/
+        run: go test -count=1 ./config/ ./config/node/ ./lib/tn/ ./lib/constructs/validator_set/ ./stacks/
 
   # Tests the check that release.yaml and publish-node-image.yaml run on each
   # release page.
