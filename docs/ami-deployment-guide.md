@@ -284,7 +284,7 @@ docker ps
 
 #### Nodes From an Older AMI
 
-An AMI built before `tn-node-update` took a tag has no `/opt/tn/ami-node-tag` file. Its compose file runs the node image tagged `latest`, and its `tn-node-update` ignores the tag, pulls `latest` for every container and recreates them all, Postgres included. To make such a node run a release tag, change it once. This keeps `.env`, the node key and the data:
+An AMI built before `tn-node-update` took a tag has no `/opt/tn/ami-node-tag` file. Its compose file names a fixed node image tag, `latest` on most builds, and its update command takes no tag: it pulls every image in the compose file, Postgres included, and recreates the containers. That command is `tn-node-update`, or `update-node` on the earliest builds. To make such a node run a release tag, change it once. This keeps `.env`, the node key and the data:
 
 ```bash
 cd /opt/tn
@@ -298,7 +298,9 @@ sudo sed -i 's|\(image: ghcr.io/trufnetwork/node:\).*|\1${TN_NODE_TAG:?set TN_NO
 sudo -u tn docker compose up -d tn-node
 ```
 
-To move such a node to another release later, change the tag in `.env` (`sudo sed -i 's/^TN_NODE_TAG=.*/TN_NODE_TAG=v2.7.0/' /opt/tn/.env`), then repeat steps 2 and 4 with that tag. Do not run its old `tn-node-update`. Its `tn-node-configure` rewrites `.env` without `TN_NODE_TAG`; if you run it, add the line back, or the node does not start.
+To move such a node to another release later, change the tag in `.env` (`sudo sed -i 's/^TN_NODE_TAG=.*/TN_NODE_TAG=v2.7.0/' /opt/tn/.env`), then repeat steps 2 and 4 with that tag. Do not run its old update command. Its `tn-node-configure` rewrites `.env` without `TN_NODE_TAG`; if you run it, add the line back, or the node does not start.
+
+If its `docker-compose.yml` has no `tn-postgres-roles` service, the node connects to Postgres as a `kwild` role that is a superuser, and these steps leave that as it is. To move it off that role, see [Moving an Existing Node Off the Superuser Role](node-operator-guide.md#moving-an-existing-node-off-the-superuser-role).
 
 ## Troubleshooting
 
