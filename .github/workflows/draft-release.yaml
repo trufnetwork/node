@@ -161,7 +161,7 @@ jobs:
             # GitHub asks for the workflows permission, which GITHUB_TOKEN
             # cannot have, to release a commit that changes a workflow file and
             # is not the tip of a branch or a tag.
-            echo "::error::GitHub refused the draft, and nothing was created. If commit $SHA changes a file under .github/workflows and is no longer the tip of a branch or a tag (for example, the branch moved on during the run), GitHub does not let this workflow release it. Run the form again with a branch whose tip is the commit to release, or write the release by hand (docs/release-process.md)."
+            echo "::error::The draft could not be created, or its creation could not be confirmed. Before running the form again, check the releases page for a draft of $TAG, and publish or delete it if it is there. If commit $SHA changes a file under .github/workflows and is no longer the tip of a branch or a tag (for example, the branch moved on during the run), GitHub does not let this workflow release it. Run the form again with a branch whose tip is the commit to release, or write the release by hand (docs/release-process.md)."
             exit 1
           fi
           echo "Draft release: $url"
