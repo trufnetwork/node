@@ -35,6 +35,26 @@ jobs:
           RELEASE_BODY: ${{ github.event.release.body }}
         run: printf '%s' "$RELEASE_BODY" | scripts/release/check-upgrade-line.sh
 
+      # The last step announces the release in Telegram only when the release
+      # had no assets before this run: on its publish, or on the edit that
+      # fixes a release whose first run failed, but not on later edits. This
+      # reads the release from the API, not from the event, so a run that
+      # waited behind an earlier one sees the binaries that run uploaded. A
+      # failed read leaves assets unset, so nothing is announced.
+      - name: Count the release's assets
+        id: before
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ github.event.release.id }}
+        run: |
+          if count=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --jq length); then
+            echo "The release has $count asset(s)."
+            echo "assets=$count" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Could not read the release's assets, so this run does not announce the release in Telegram."
+          fi
+
       - name: Set Version
         id: vars
         run: |
@@ -94,6 +114,7 @@ jobs:
           rm -rf ./.build/kwild
 
       - name: Release
+        id: upload
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
@@ -103,3 +124,22 @@ jobs:
             ./.build/tn_${{ env.VERSION }}_linux_amd64.tar.gz
             ./.build/tn_${{ env.VERSION }}_linux_arm64.tar.gz
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      # One message to the Telegram chat and topic that the node alerts use
+      # (docs/release-process.md). Without the secrets, as in a fork, the
+      # script skips with a notice. A failure here does not fail the release.
+      - name: Announce the release in Telegram
+        if: github.event_name == 'release' && steps.before.outputs.assets == '0' && steps.upload.outcome == 'success'
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_TOPIC_ID: ${{ secrets.TELEGRAM_TOPIC_ID }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+        run: |
+          if ! scripts/release/announce-telegram.sh "$RELEASE_TAG" "$RELEASE_URL" <<<"$RELEASE_BODY"; then
+            echo "::warning::The release was not announced in Telegram. To post it by hand, see docs/release-process.md#the-telegram-announcement."
+            exit 1
+          fi
