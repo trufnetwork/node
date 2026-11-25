@@ -326,7 +326,7 @@ This directory contains infrastructure for automated AMI building using AWS EC2 
 
 - **Automated AMI Building**: EC2 Image Builder pipeline for creating TrufNetwork node AMIs
 - **Docker-in-AMI**: Pre-installed Docker with docker-compose for container orchestration
-- **Always-Latest Strategy**: Containers pull latest images on startup
+- **Release Tags**: The node containers run the release in `TN_NODE_TAG` in `/opt/tn/.env`, and `sudo tn-node-update <release tag>` moves them to another release
 - **MCP Server Integration**: PostgreSQL MCP server for AI agent access via SSE transport
 - **Current Region Distribution**: AMI distribution in deployment region (multi-region planned)
 - **GitHub Actions Integration**: Automated builds triggered by releases

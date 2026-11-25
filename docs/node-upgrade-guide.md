@@ -256,7 +256,7 @@ A required release changes how blocks run from the block its release page names.
      docker compose pull tn-node postgres-roles
      docker compose up -d
      ```
-   * **AMI**: run `sudo tn-node-update v2.6.9` with the release tag. See [Updates](ami-deployment-guide.md#updates) in the AMI guide.
+   * **AMI**: run `sudo tn-node-update v2.6.9` with the release tag. See [Updates](ami-deployment-guide.md#updates) in the AMI guide. A node built from an older AMI, one with no `/opt/tn/ami-node-tag` file, has a `tn-node-update` that ignores the tag; follow [Nodes From an Older AMI](ami-deployment-guide.md#nodes-from-an-older-ami) instead.
 4. Check that your node reports the release, as in [Check the version](#3-install-the-latest-kwild-binary), and that its height keeps advancing.
 
 ### If Your Node Stopped at a Block

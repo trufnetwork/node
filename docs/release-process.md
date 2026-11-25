@@ -63,7 +63,8 @@ A required release must run every block before its block the same way as the rel
 - Publish a required release at least 7 days before its mainnet block, and state its testnet block on the same line.
 - Pick each block from the measured block rate, as in [Pick the activation height](maa-rollout.md#pick-the-activation-height), and round the time.
 - A migration that needs the new release, for example one whose actions call a method only that release has, is applied on a network only after the release's block on that network.
-- Where the change waits on an on-chain network parameter, as `maa_exec` waits on `maa_activation_height`, a resolution can move its height later if operators need more time, as long as it passes before the earlier height (see [Re-scheduling](maa-rollout.md#re-scheduling)). Then edit the release notes to the new block and time. A height written into the code moves only with a new release.
+- Where the change waits on an on-chain network parameter that the release adds, as `maa_exec` waits on `maa_activation_height`, the release's block is the earliest block in which the resolution that sets the parameter may pass, not the height that resolution sets. A node on an older release cannot read the parameter and halts once that resolution passes, whatever height it sets (see [Failure modes and rollback](maa-rollout.md#failure-modes-and-rollback)). If operators need more time, hold the resolution back and edit the release notes to the new block and time. After the resolution has passed, a follow-up resolution can still move the activation height later (see [Re-scheduling](maa-rollout.md#re-scheduling)), but that only delays the change on upgraded nodes and gives no more time to a node on an older release.
+- A height written into the code moves only with a new release.
 
 ## Where Release Notices Go Out
 
