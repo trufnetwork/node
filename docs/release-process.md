@@ -99,7 +99,7 @@ The normal way is the **Draft release** form. It writes the upgrade line, adds t
 1. On the repository's **Actions** tab, choose **Draft release**, then **Run workflow**. Leave **Use workflow from** on `main`.
 2. Fill in the form:
    - **Tag**: the new release's tag, `vX.Y.Z`. No release, draft or tag may have it yet.
-   - **Target**: the branch or commit to release, `main` by default. The draft is pinned to the commit that the target points at when the run starts, so a later merge does not slip into the release.
+   - **Target**: the branch or commit to release, `main` by default. The draft is pinned to one commit, so a later merge does not slip into the release. When the target is the branch in **Use workflow from**, as `main` is by default, that commit is the branch's tip when you click **Run workflow**. For another target, it is the commit the target points at when the run checks it, shortly after the start. GitHub does not let the run release a commit that changes a file under `.github/workflows` and is not the tip of a branch or a tag; the run then stops with an error and creates nothing. Give a branch whose tip is that commit as the target, or release [by hand](#by-hand).
    - **Mainnet** and **Testnet**: `optional` or `required`; see [Optional or Required](#optional-or-required).
    - For each required network, its **block** and its **time**, in UTC as `YYYY-MM-DD HH:MM`; see [Notice for a Required Release](#notice-for-a-required-release). Leave both empty for an optional network. The run refuses a block or a time given for an optional network, so that nothing you typed is dropped.
    - **Summary**: optional. One line shown under the upgrade line, above the generated notes.

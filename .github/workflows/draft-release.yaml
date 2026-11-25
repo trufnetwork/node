@@ -129,7 +129,11 @@ jobs:
             echo "::error::A release or a draft for $TAG exists already. Finish or delete it on the releases page, or pick a new tag."
             exit 1
           fi
-          if ! sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TARGET" --jq .sha); then
+          if [ "$TARGET" = "$GITHUB_REF_NAME" ]; then
+            # The branch or tag the run was started from: its commit when Run
+            # workflow was clicked.
+            sha=$GITHUB_SHA
+          elif ! sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TARGET" --jq .sha); then
             echo "::error::The target $TARGET is not a branch, tag or commit of this repository."
             exit 1
           fi
@@ -152,8 +156,14 @@ jobs:
         env:
           SHA: ${{ steps.target.outputs.sha }}
         run: |
-          url=$(gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
-            --title "$TAG" --target "$SHA" --notes-file "$RUNNER_TEMP/body.md")
+          if ! url=$(gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
+            --title "$TAG" --target "$SHA" --notes-file "$RUNNER_TEMP/body.md"); then
+            # GitHub asks for the workflows permission, which GITHUB_TOKEN
+            # cannot have, to release a commit that changes a workflow file and
+            # is not the tip of a branch or a tag.
+            echo "::error::GitHub refused the draft, and nothing was created. If commit $SHA changes a file under .github/workflows and is no longer the tip of a branch or a tag (for example, the branch moved on during the run), GitHub does not let this workflow release it. Run the form again with a branch whose tip is the commit to release, or write the release by hand (docs/release-process.md)."
+            exit 1
+          fi
           echo "Draft release: $url"
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
