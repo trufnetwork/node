@@ -26,6 +26,15 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # A release whose page does not open with the upgrade line gets no binaries
+      # (docs/release-process.md). Editing the page to add the line runs this
+      # workflow again. A manual run has no release page, so it skips the check.
+      - name: Check the upgrade line
+        if: github.event_name == 'release'
+        env:
+          RELEASE_BODY: ${{ github.event.release.body }}
+        run: printf '%s' "$RELEASE_BODY" | scripts/release/check-upgrade-line.sh
+
       - name: Set Version
         id: vars
         run: |

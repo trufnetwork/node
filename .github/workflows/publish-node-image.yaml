@@ -29,6 +29,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # A release whose page does not open with the upgrade line gets no image,
+      # and latest does not move (docs/release-process.md). A manual run has no
+      # release page, so it skips the check.
+      - name: Check the upgrade line
+        if: github.event_name == 'release'
+        env:
+          RELEASE_BODY: ${{ github.event.release.body }}
+        run: printf '%s' "$RELEASE_BODY" | scripts/release/check-upgrade-line.sh
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
