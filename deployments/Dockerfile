@@ -18,12 +18,21 @@ COPY internal/ ./internal/
 COPY extensions/ ./extensions/
 COPY deployments/tn-entrypoint.sh ./deployments/tn-entrypoint.sh
 
-# todo: incorporate task build process, otherwise images will lack information about the build
+# The TN release, commit and commit time that kwild version, kwild --version, the
+# startup log and user.version report. The image workflow passes them; a local
+# build without them reports 0.0.0-dev.
+ARG TN_VERSION=0.0.0-dev
+ARG TN_COMMIT=unknown
+ARG TN_BUILD_TIME=
+
 # Use build cache mounts for faster rebuilds
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    pkg=github.com/trufnetwork/node/cmd/version && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -o /app/.build/kwild /app/cmd/kwild/main.go
+    go build \
+    -ldflags "-X ${pkg}.TNVersion=${TN_VERSION} -X ${pkg}.TNCommit=${TN_COMMIT} -X ${pkg}.TNBuildTime=${TN_BUILD_TIME}" \
+    -o /app/.build/kwild /app/cmd/kwild/main.go
 
 # Pin to alpine3.21 to match the final runtime stage below: the floating
 # `postgres:16-alpine` tag has moved to Alpine 3.24, which dropped the clang19/llvm19

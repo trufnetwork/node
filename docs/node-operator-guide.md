@@ -958,9 +958,11 @@ Sometimes you may need to reset your node to sync from a specific point or recov
    sudo mv .build/kwild /usr/local/bin/kwild
    sudo chmod +x /usr/local/bin/kwild
    
-   # Verify version
+   # Verify version: "Version:" shows the TN release, for example 2.6.9
    kwild version
    ```
+
+   A binary that prints `Version: 0.10.1` (kwil-db's version) was built before TN releases carried their own version. See [Check the version](node-upgrade-guide.md#3-install-the-latest-kwild-binary) in the upgrade guide for what the output shows and how to read the release of a node that runs in Docker.
 
 6. **Restore node identity and custom configuration** *(optional)*:
    

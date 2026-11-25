@@ -50,6 +50,37 @@ jobs:
             type=ref,event=tag
             type=semver,pattern={{version}}
 
+      - name: Read the commit time
+        id: commit
+        run: echo "time=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
+
+      # Build and load the image first, so a binary that reports the wrong version is never
+      # pushed. The push step below reuses this build's cache.
+      - name: Build image for the version check (linux/amd64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deployments/Dockerfile
+          load: true
+          platforms: linux/amd64
+          tags: tn-node:version-check
+          build-args: |
+            TN_VERSION=${{ steps.meta.outputs.version }}
+            TN_COMMIT=${{ github.sha }}
+            TN_BUILD_TIME=${{ steps.commit.outputs.time }}
+          cache-from: type=gha
+
+      - name: Check that kwild reports the image version
+        env:
+          EXPECTED: ${{ steps.meta.outputs.version }}
+        run: |
+          got=$(docker run --rm --entrypoint /app/kwild tn-node:version-check version --output json | jq -r '.result.version')
+          if [ "$got" != "$EXPECTED" ]; then
+            echo "::error::kwild version prints '$got', but the image version is '$EXPECTED'"
+            exit 1
+          fi
+          echo "kwild reports $EXPECTED"
+
       - name: Build and push image (linux/amd64)
         uses: docker/build-push-action@v5
         with:
@@ -59,6 +90,10 @@ jobs:
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            TN_VERSION=${{ steps.meta.outputs.version }}
+            TN_COMMIT=${{ github.sha }}
+            TN_BUILD_TIME=${{ steps.commit.outputs.time }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
