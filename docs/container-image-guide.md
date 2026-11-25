@@ -42,7 +42,7 @@ services:
   # creates the Postgres roles the node connects as. It runs before the node on every start,
   # once Postgres takes TCP connections
   postgres-roles:
-    image: ghcr.io/trufnetwork/node:${TN_NODE_TAG:-latest}
+    image: ghcr.io/trufnetwork/node:${TN_NODE_TAG:?set TN_NODE_TAG in .env to a release tag}
     entrypoint: ["sh", "-c", "for i in $$(seq 60); do pg_isready --host=postgres --username=postgres --quiet && break; sleep 1; done; exec psql --host=postgres --username=postgres --no-psqlrc --set=ON_ERROR_STOP=1 --file=/app/postgres-roles.sql"]
     restart: "no"
     depends_on:
@@ -50,7 +50,7 @@ services:
         condition: service_healthy
 
   tn-node:
-    image: ghcr.io/trufnetwork/node:${TN_NODE_TAG:-latest}
+    image: ghcr.io/trufnetwork/node:${TN_NODE_TAG:?set TN_NODE_TAG in .env to a release tag}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -72,10 +72,10 @@ services:
 
 </details>
 
-Compose automatically loads variables from a `.env` file in the same directory. At a minimum set the node image tag you want to run (for example the latest release) and optionally pre-fill auto-setup values:
+Compose automatically loads variables from a `.env` file in the same directory. Set `TN_NODE_TAG` to the release you want to run, a tag from the [release page](https://github.com/trufnetwork/node/releases). The stack does not start without it. Each release image is tagged with and without the leading `v` (`v2.6.8` and `2.6.8`). Optionally pre-fill auto-setup values:
 
 ```dotenv
-TN_NODE_TAG=v0.15.0
+TN_NODE_TAG=v2.6.8
 SETUP_CHAIN_ID=truflation-dev
 # Leave empty to let the container derive the owner from the generated node key
 SETUP_DB_OWNER=
@@ -127,4 +127,5 @@ For throwaway networks you can skip the steps above. Leave `SETUP_DB_OWNER` blan
 ## Maintenance tips
 - Back up the `~/truf-node/tn_data` directory; it contains the node identity, admin certificates, and blockstore.
 - To rotate configuration, stop the stack, edit files under `~/truf-node/tn_data`, then start the stack again. The entrypoint leaves existing files untouched.
+- To upgrade, set `TN_NODE_TAG` in `.env` to the new release, then run `docker compose pull tn-node postgres-roles` and `docker compose up -d`. Compose recreates the containers whose image changed. When a release is required by a block, upgrade before that block; see [Required In-Place Upgrade](node-upgrade-guide.md#required-in-place-upgrade).
 - Testing a new image? Set `TN_NODE_TAG` to the candidate tag and point the compose stack at a fresh host directory so you can diff auto-generated config before promoting it to production.

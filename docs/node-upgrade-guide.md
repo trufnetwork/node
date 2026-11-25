@@ -1,7 +1,26 @@
 # Node Upgrade Guide
 
 Keeping your node up-to-date ensures you benefit from the latest performance improvements, bug-fixes, and security patches.  
-This page describes the **most common upgrade path – an in-place binary upgrade that does *not* change consensus rules** (i.e. no schema or protocol breaking changes).
+This page describes the **most common upgrade path – an in-place upgrade**: you replace the binary or the image and keep your data. A release that changes how blocks run from some block on is required by that block; see [Required In-Place Upgrade](#required-in-place-upgrade). A network migration to a new genesis is covered under [Breaking Changes & Migrations](#breaking-changes--migrations).
+
+---
+
+## Is the Upgrade Required?
+
+Each release page opens with one line that says whether your node must install the release:
+
+```text
+Upgrade: optional.
+Upgrade: required on mainnet from block 3300000 (about 2026-12-10 12:00 UTC), required on testnet from block 16300000 (about 2026-12-03 12:00 UTC).
+Upgrade: required on mainnet from block 3300000 (about 2026-12-10 12:00 UTC), optional on testnet.
+Upgrade: optional on mainnet, required on testnet from block 16300000 (about 2026-12-03 12:00 UTC).
+```
+
+The blocks and times above are examples. `optional` means a node on the release before keeps following the chain. `required ... from block N` means your node must run this release, or a later one, before that network reaches block `N`. The time is an estimate from the block rate; the block is what counts.
+
+A release that is required on mainnet is published at least 7 days before its mainnet block. Releases up to v2.6.8 were published before this line, so their pages do not carry it.
+
+Release notices go out on the [release page](https://github.com/trufnetwork/node/releases). To get them, choose **Watch → Custom → Releases** on the [repository](https://github.com/trufnetwork/node), or follow the feed at <https://github.com/trufnetwork/node/releases.atom>.
 
 ---
 
@@ -34,17 +53,17 @@ If you manage `kwild` with another init system or inside Docker Compose, use the
 
 ## 3. Install the Latest `kwild` Binary
 
-1. **Download** – grab the newest release from GitHub:
+1. **Download** – grab the release you are installing from GitHub. `<VERSION>` is its version without the `v`, such as `2.6.9`:
    ```bash
-   curl -L "https://github.com/trufnetwork/node/releases/latest/download/tn_<VERSION>_linux_amd64.tar.gz" \
+   curl -L "https://github.com/trufnetwork/node/releases/download/v<VERSION>/tn_<VERSION>_linux_amd64.tar.gz" \
        -o kwild.tgz
    tar -xzf kwild.tgz kwild
    ```
    Note: This extracts the `kwild` binary to your current directory.
 
-   Or, **build from source** in your clone:
+   Or, **build from source** in your clone, at the release tag:
    ```bash
-   git pull && task build
+   git fetch --tags && git checkout v<VERSION> && task build
    ```
    Note: This builds the binary to `.build/kwild` in your repository directory.
 
@@ -217,6 +236,55 @@ kwild blacklist list
 ```
 ---
 
+## Required In-Place Upgrade
+
+A required release changes how blocks run from the block its release page names. It runs every block before that one the same way as the release before it, so you can install it at any time before the block. A node that still runs an older release when the network reaches the block stops there; see [If Your Node Stopped at a Block](#if-your-node-stopped-at-a-block).
+
+1. Read the first line of the release page, for example:
+   ```text
+   Upgrade: required on mainnet from block 3300000 (about 2026-12-10 12:00 UTC), optional on testnet.
+   ```
+   A mainnet node must run this release, or a later one, before mainnet reaches block 3300000. On testnet the release is optional.
+2. Check how far your node is from that block:
+   ```bash
+   curl -s http://127.0.0.1:8484/api/v1/health | jq '.services.user.block_height'
+   ```
+3. Install the release before the block:
+   * **Binary** (for example with systemd): follow steps 1 to 5 above with the release's version.
+   * **Docker Compose**, as in the [Container Image Guide](container-image-guide.md): set `TN_NODE_TAG` in `.env` to the release tag, such as `v2.6.9`, then run:
+     ```bash
+     docker compose pull tn-node postgres-roles
+     docker compose up -d
+     ```
+   * **AMI**: run `sudo tn-node-update v2.6.9` with the release tag. See [Updates](ami-deployment-guide.md#updates) in the AMI guide.
+4. Check that your node reports the release, as in [Check the version](#3-install-the-latest-kwild-binary), and that its height keeps advancing.
+
+### If Your Node Stopped at a Block
+
+A node that runs an older release stops at the first block it computes differently from the network. `kwild` logs:
+
+```text
+processAndCommit: AppHash mismatch, halting the node. expected: <app hash your node computed>, received: <app hash the network committed>
+```
+
+When the node halts while following the chain, this text is the `reason` of the log line `Received halt signal, stopping the consensus engine`. When it halts while catching up, for example after a restart, the text is part of the error `kwild` stops with, such as `failed to apply block at height: <height>: error: processAndCommit: AppHash mismatch, halting the node. ...`. A validator that ran the block as a proposal logs `Incorrect AppHash, halting the node. received: <app hash the network committed>, computed: <app hash your node computed>` instead.
+
+The node does not commit that block. Its writes stay in Postgres transactions that `kwild` rolls back when it stops or starts, the block is not stored, and the node stays at the block before it. Started again on the same release, it applies the block again and stops at the same place, so `Restart=always` or `restart: unless-stopped` only repeats the stop.
+
+To recover:
+
+1. On the [release page](https://github.com/trufnetwork/node/releases), find the release that is required from that block on.
+2. Install it as in step 3 of [Required In-Place Upgrade](#required-in-place-upgrade).
+3. Start the node, if the install step did not. It applies the block again with the new release and continues from there. You do not need to reset the node or restore a snapshot.
+4. Check that the height passes the block:
+   ```bash
+   curl -s http://127.0.0.1:8484/api/v1/health | jq '.services.user.block_height'
+   ```
+
+If the node stops at the same block while `kwild version` prints the required release, reach out on Discord or open a GitHub issue with the log lines.
+
+---
+
 ## What About PostgreSQL & Other Components?
 
 *Minor* Kwil releases do **not** require a database upgrade.  
@@ -256,7 +324,7 @@ note:
 When the network requires a fork due to consensus changes or critical issues, you'll need to reset your node with a new genesis file.
 
 **Prerequisites:**
-- Check official announcements for specific migration instructions
+- Read the [release page](https://github.com/trufnetwork/node/releases) of the release that moves the network: it gives the migration instructions
 - Ensure you have the latest `truf-node-operator` repository (`git pull`)
 
 **Recovery Steps:**
@@ -275,7 +343,7 @@ See:
 * [Migrations overview](https://docs.kwil.com/docs/node/migrations)
 * [Zero-downtime migrations guide](https://docs.kwil.com/docs/node/migrations/zero-downtime-migrations)
 
-If your target version mentions a *migration required* flag in the release notes, **contact the TRUF.NETWORK team before proceeding**.
+If the release page of your target version says it needs a network migration, **contact the TRUF.NETWORK team before proceeding**.
 
 ---
 
