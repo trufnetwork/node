@@ -56,8 +56,9 @@ jobs:
         run: go test -count=1 ./config/ ./config/node/ ./lib/tn/ ./lib/constructs/validator_set/ ./stacks/
 
   # Tests the check that release.yaml and publish-node-image.yaml run on each
-  # release page, and the Telegram announcement that release.yaml posts. The
-  # announcement test sends only to a local fake Telegram.
+  # release page, the Telegram announcement that release.yaml posts, and the
+  # form of draft-release.yaml. The announcement test sends only to a local
+  # fake Telegram, and the form test reads heights from a fake curl.
   release-upgrade-line:
     runs-on: ubuntu-latest
     if: ${{ !github.event.pull_request.draft }}
@@ -67,6 +68,8 @@ jobs:
         run: scripts/release/test-check-upgrade-line.sh
       - name: Test the Telegram announcement
         run: scripts/release/test-announce-telegram.sh
+      - name: Test the Draft release form
+        run: scripts/release/test-compose-release-notes.sh
 
   acceptance-test:
     runs-on: ubuntu-latest

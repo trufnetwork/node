@@ -1,0 +1,194 @@
+name: Draft release
+
+# Drafts a release from a form. The person releasing gives the tag, the target
+# and whether each network must install the release. The run checks every
+# answer before it creates anything, writes the upgrade line that release.yaml
+# and publish-node-image.yaml check (docs/release-process.md), adds the
+# summary and the notes that GitHub generates, and saves the release as a
+# draft.
+#
+# Why a draft: a release that a workflow creates with GITHUB_TOKEN does not
+# start other workflows. So this run stops at the draft, and the person
+# releasing reviews it and clicks Publish release. That click starts
+# release.yaml and publish-node-image.yaml as before: the upgrade line check,
+# the binaries, the image and the Telegram announcement.
+
+run-name: Draft release ${{ inputs.tag }}
+
+'on':
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of the new release, vX.Y.Z (for example v2.7.0). This run saves a draft; you review it and click Publish release."
+        required: true
+        type: string
+      target:
+        description: "Branch or commit to release. The draft is pinned to the commit it points at when this runs."
+        required: true
+        default: main
+        type: string
+      mainnet:
+        description: "Mainnet: must mainnet nodes install this release by a block? If required, fill in the mainnet block and time."
+        required: true
+        default: optional
+        type: choice
+        options:
+          - optional
+          - required
+      mainnet_block:
+        description: "Mainnet block from which the release is required, for example 3300000. Only when mainnet is required; leave empty otherwise."
+        required: false
+        type: string
+      mainnet_time:
+        description: "About when that mainnet block comes, in UTC: YYYY-MM-DD HH:MM. At least 7 days from now. Only when mainnet is required; leave empty otherwise."
+        required: false
+        type: string
+      testnet:
+        description: "Testnet: must testnet nodes install this release by a block? If required, fill in the testnet block and time."
+        required: true
+        default: optional
+        type: choice
+        options:
+          - optional
+          - required
+      testnet_block:
+        description: "Testnet block from which the release is required, for example 16300000. Only when testnet is required; leave empty otherwise."
+        required: false
+        type: string
+      testnet_time:
+        description: "About when that testnet block comes, in UTC: YYYY-MM-DD HH:MM. Only when testnet is required; leave empty otherwise."
+        required: false
+        type: string
+      summary:
+        description: "Optional. One line shown under the upgrade line, above the generated notes."
+        required: false
+        type: string
+      short_notice:
+        description: "Short notice: allow a mainnet time less than 7 days away, for an urgent release. The run warns."
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: draft-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    name: Draft the release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag }}
+      TARGET: ${{ inputs.target }}
+      MAINNET: ${{ inputs.mainnet }}
+      MAINNET_BLOCK: ${{ inputs.mainnet_block }}
+      MAINNET_TIME: ${{ inputs.mainnet_time }}
+      TESTNET: ${{ inputs.testnet }}
+      TESTNET_BLOCK: ${{ inputs.testnet_block }}
+      TESTNET_TIME: ${{ inputs.testnet_time }}
+      SUMMARY: ${{ inputs.summary }}
+      SHORT_NOTICE: ${{ inputs.short_notice }}
+      # Public gateways, read for the current heights only.
+      MAINNET_RPC: https://gateway.mainnet.truf.network/rpc/v1
+      TESTNET_RPC: https://gateway.testnet.truf.network/rpc/v1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Refuses a wrong tag, a missing or stray block or time, a time in the
+      # wrong form and a mainnet time less than 7 days away; warns when a block
+      # is not above its network's current height.
+      - name: Check the form and write the upgrade line
+        run: |
+          scripts/release/compose-release-notes.sh \
+            --tag "$TAG" --target "$TARGET" \
+            --mainnet "$MAINNET" --mainnet-block "$MAINNET_BLOCK" --mainnet-time "$MAINNET_TIME" \
+            --testnet "$TESTNET" --testnet-block "$TESTNET_BLOCK" --testnet-time "$TESTNET_TIME" \
+            --summary "$SUMMARY" --short-notice "$SHORT_NOTICE" \
+            --mainnet-rpc "$MAINNET_RPC" --testnet-rpc "$TESTNET_RPC" \
+            > "$RUNNER_TEMP/head.md"
+
+      - name: Check the tag and the target
+        id: target
+        run: |
+          refs=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$TAG" --jq '.[].ref')
+          if grep -qxF "refs/tags/$TAG" <<<"$refs"; then
+            echo "::error::The tag $TAG exists already. Pick a new tag."
+            exit 1
+          fi
+          # Drafts have no tag yet, so the releases are read too.
+          releases=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name')
+          if grep -qxF "$TAG" <<<"$releases"; then
+            echo "::error::A release or a draft for $TAG exists already. Finish or delete it on the releases page, or pick a new tag."
+            exit 1
+          fi
+          if [ "$TARGET" = "$GITHUB_REF_NAME" ]; then
+            # The branch or tag the run was started from: its commit when Run
+            # workflow was clicked.
+            sha=$GITHUB_SHA
+          elif ! sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TARGET" --jq .sha); then
+            echo "::error::The target $TARGET is not a branch, tag or commit of this repository."
+            exit 1
+          fi
+          echo "The target $TARGET is commit $sha."
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      # generate-notes only returns text; it creates nothing. GitHub picks the
+      # previous release as the start of the list.
+      - name: Write the release notes
+        env:
+          SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$TAG" -f target_commitish="$SHA" --jq .body > "$RUNNER_TEMP/notes.md"
+          { cat "$RUNNER_TEMP/head.md"; echo; cat "$RUNNER_TEMP/notes.md"; } > "$RUNNER_TEMP/body.md"
+          scripts/release/check-upgrade-line.sh < "$RUNNER_TEMP/body.md"
+
+      - name: Create the draft release
+        id: draft
+        env:
+          SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          if ! url=$(gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
+            --title "$TAG" --target "$SHA" --notes-file "$RUNNER_TEMP/body.md"); then
+            # GitHub asks for the workflows permission, which GITHUB_TOKEN
+            # cannot have, to release a commit that changes a workflow file and
+            # is not the tip of a branch or a tag.
+            echo "::error::The draft could not be created, or its creation could not be confirmed. Before running the form again, check the releases page for a draft of $TAG, and publish or delete it if it is there. If commit $SHA changes a file under .github/workflows and is no longer the tip of a branch or a tag (for example, the branch moved on during the run), GitHub does not let this workflow release it. Run the form again with a branch whose tip is the commit to release, or write the release by hand (docs/release-process.md)."
+            exit 1
+          fi
+          echo "Draft release: $url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Write the run summary
+        env:
+          SHA: ${{ steps.target.outputs.sha }}
+          DRAFT_URL: ${{ steps.draft.outputs.url }}
+        run: |
+          body=$RUNNER_TEMP/body.md
+          {
+            echo "## Draft release $TAG"
+            echo
+            echo "Review it, then click **Publish release**: $DRAFT_URL"
+            echo
+            echo "Target: \`$TARGET\`, commit \`$SHA\`."
+            echo
+            echo "### Upgrade line"
+            echo
+            echo '```text'
+            head -n 1 "$body"
+            echo '```'
+            echo
+            echo "### Telegram message after you publish"
+            echo
+            echo '```text'
+            scripts/release/announce-telegram.sh --dry-run "$TAG" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG" < "$body"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

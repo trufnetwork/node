@@ -6,6 +6,8 @@ This page is for maintainers who publish a TN node release. Node operators read 
 
 The release notes open with one line that says whether node operators must install the release. `release.yaml` and `publish-node-image.yaml` check that line before they build anything. A release without it gets no binaries and no image, and the `latest` image tag does not move.
 
+The **Draft release** form writes this line for you; see [Publishing a Release](#publishing-a-release).
+
 The line is exactly one of these four forms:
 
 - Optional on both networks:
@@ -60,7 +62,7 @@ A required release must run every block before its block the same way as the rel
 
 ## Notice for a Required Release
 
-- Publish a required release at least 7 days before its mainnet block, and state its testnet block on the same line.
+- Publish a required release at least 7 days before its mainnet block, and state its testnet block on the same line. The **Draft release** form refuses a mainnet time less than 7 days away unless **Short notice** is ticked.
 - Pick each block from the measured block rate, as in [Pick the activation height](maa-rollout.md#pick-the-activation-height), and round the time.
 - A migration that needs the new release, for example one whose actions call a method only that release has, is applied on a network only after the release's block on that network.
 - Where the change waits on an on-chain network parameter that the release adds, as `maa_exec` waits on `maa_activation_height`, the release's block is the earliest block in which the resolution that sets the parameter may pass, not the height that resolution sets. A node on an older release cannot read the parameter and halts once that resolution passes, whatever height it sets (see [Failure modes and rollback](maa-rollout.md#failure-modes-and-rollback)). If operators need more time, hold the resolution back and edit the release notes to the new block and time. After the resolution has passed, a follow-up resolution can still move the activation height later (see [Re-scheduling](maa-rollout.md#re-scheduling)), but that only delays the change on upgraded nodes and gives no more time to a node on an older release.
@@ -90,10 +92,39 @@ Without `--dry-run`, it posts the message to the chat in `TELEGRAM_CHAT_ID`, in 
 
 ## Publishing a Release
 
+The normal way is the **Draft release** form. It writes the upgrade line, adds the notes that GitHub generates, and saves the release as a draft for you to review and publish. Writing the notes by hand is the fallback.
+
+### With the Draft Release Form
+
+1. On the repository's **Actions** tab, choose **Draft release**, then **Run workflow**. Leave **Use workflow from** on `main`.
+2. Fill in the form:
+   - **Tag**: the new release's tag, `vX.Y.Z`. No release, draft or tag may have it yet.
+   - **Target**: the branch or commit to release, `main` by default. The draft is pinned to one commit, so a later merge does not slip into the release. When the target is the branch in **Use workflow from**, as `main` is by default, that commit is the branch's tip when you click **Run workflow**. For another target, it is the commit the target points at when the run checks it, shortly after the start. GitHub does not let the run release a commit that changes a file under `.github/workflows` and is not the tip of a branch or a tag; the run then stops with an error and creates nothing. Give a branch whose tip is that commit as the target, or release [by hand](#by-hand).
+   - **Mainnet** and **Testnet**: `optional` or `required`; see [Optional or Required](#optional-or-required).
+   - For each required network, its **block** and its **time**, in UTC as `YYYY-MM-DD HH:MM`; see [Notice for a Required Release](#notice-for-a-required-release). Leave both empty for an optional network. The run refuses a block or a time given for an optional network, so that nothing you typed is dropped.
+   - **Summary**: optional. One line shown under the upgrade line, above the generated notes.
+   - **Short notice**: tick it only for an urgent release whose mainnet time is less than 7 days away. The run then warns instead of refusing.
+3. Click **Run workflow**. The run checks every answer before it creates anything and lists each problem it finds. It warns when a required block is not above that network's current height. It writes the notes: the upgrade line, then the summary when given, then the notes that GitHub generates since the previous release. It checks them with `check-upgrade-line.sh` and saves them as a draft release.
+4. Open the run. Its summary shows the upgrade line, the Telegram message that the release will post, and the link to the draft.
+5. Open the draft and review it. You can edit it, keeping the upgrade line first. Editing a draft starts no workflow.
+6. Click **Publish release**. That starts the workflows in [What Publishing Starts](#what-publishing-starts). Publish soon after the run: the 7 days of notice count from the run, not from the publish.
+
+The run stops at a draft because a release that a workflow creates with its `GITHUB_TOKEN` does not start other workflows. Your click on **Publish release** does, so the check, the binaries, the image and the Telegram announcement run as for a release written by hand.
+
+`scripts/release/compose-release-notes.sh` checks the form and writes the upgrade line. `scripts/release/test-compose-release-notes.sh` tests it; CI runs it.
+
+### By Hand
+
+When the form cannot be used:
+
 1. Draft the release from its tag, generate the notes, and put the upgrade line first.
 2. Check the notes with `scripts/release/check-upgrade-line.sh`.
-3. Publish. `release.yaml` builds the four `kwild` tarballs, uploads them to the release and posts the Telegram announcement. `publish-node-image.yaml` pushes the image as `v<version>`, `<version>`, `sha-<short commit>` and `latest`.
-4. If the line was missing or wrong, both workflows fail before they build. Edit the release to fix the line. `release.yaml` runs again on the edit, uploads the binaries and posts the announcement. `publish-node-image.yaml` runs only when a release is published, so run **Publish Node Image** by hand on the release tag with **Also tag this build as latest**. A manual run has no release notes to read, so it skips the check.
-5. After a required release, run **Build AMI** so that nodes launched from the AMI start on it.
+3. Publish.
+
+### What Publishing Starts
+
+1. `release.yaml` builds the four `kwild` tarballs, uploads them to the release and posts the Telegram announcement. `publish-node-image.yaml` pushes the image as `v<version>`, `<version>`, `sha-<short commit>` and `latest`.
+2. If the line was missing or wrong, both workflows fail before they build. Edit the release to fix the line. `release.yaml` runs again on the edit, uploads the binaries and posts the announcement. `publish-node-image.yaml` runs only when a release is published, so run **Publish Node Image** by hand on the release tag with **Also tag this build as latest**. A manual run has no release notes to read, so it skips the check.
+3. After a required release, run **Build AMI** so that nodes launched from the AMI start on it.
 
 Every edit of the release notes runs `release.yaml` again, which builds and uploads the binaries again. It does not post the announcement again.
