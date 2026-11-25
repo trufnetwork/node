@@ -67,6 +67,23 @@ If you manage `kwild` with another init system or inside Docker Compose, use the
    ```bash
    kwild version
    ```
+   `Version` is the TN release the binary was built from, and `Git commit` is the first 9 characters of its commit. A `v2.6.9` release binary prints, for example:
+   ```text
+    Version:	2.6.9
+    Git commit:	<first 9 characters of the release commit>
+    Built:		<commit time> (commit time)
+    Go version:	go1.25.3
+    OS/Arch:	linux/amd64
+   ```
+   `kwild --version` prints the same release (`kwild version 2.6.9`), and `kwild version --output json | jq -r .result.version` prints only `2.6.9`. A binary built with `task build` prints the `git describe` version of your clone instead, such as `2.6.8-4-g9e008683` for a clone 4 commits past `v2.6.8`.
+
+   A binary that prints `0.10.1` (kwil-db's version) was built before TN releases carried their own version, as the v2.6.8 release was. Read its release from the release page or tarball you downloaded it from.
+
+   If your node runs in Docker, read the release from the image label of the running container:
+   ```bash
+   docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' <container>
+   ```
+   For an image that carries the TN version, `docker exec <container> /app/kwild version` prints the same release; an older image prints `0.10.1` there.
 
 ---
 

@@ -14,6 +14,17 @@ var (
 	TNBuildTime string // -X github.com/trufnetwork/node/cmd/version.TNBuildTime=...
 )
 
+// kwild --version, the "Starting kwild version" log line and kwil_ver in the
+// RPC version methods (user.version and the others) read kwil-db's
+// KwilVersion. When a build sets TNVersion, KwilVersion takes the same value,
+// so they all report the TN release. The health endpoints keep their API
+// versions.
+func init() {
+	if TNVersion != "" {
+		kwilVersion.KwilVersion = TNVersion
+	}
+}
+
 // getVersion returns the TN version if set, otherwise falls back to kwil-db version
 func getVersion() string {
 	if TNVersion != "" {

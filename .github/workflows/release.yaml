@@ -32,34 +32,55 @@ jobs:
           VERSION=${GITHUB_REF#refs/tags/}
           VERSION=${VERSION#v}
           echo "VERSION=$VERSION" >> $GITHUB_ENV
+          # stamp the release, its commit and the commit time into kwild, as task build does
+          PKG=github.com/trufnetwork/node/cmd/version
+          BUILD_TIME=$(git log -1 --format=%cI)
+          echo "LDFLAGS=-X $PKG.TNVersion=$VERSION -X $PKG.TNCommit=$GITHUB_SHA -X $PKG.TNBuildTime=$BUILD_TIME" >> $GITHUB_ENV
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22.x'
-          check-latest: true
+          go-version-file: go.mod
 
       - name: Build for Darwin AMD64
         run: |
-          GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o ./.build/kwild ./cmd/kwild/main.go
+          GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$LDFLAGS" -o ./.build/kwild ./cmd/kwild/main.go
           tar -czvf ./.build/tn_${{ env.VERSION }}_darwin_amd64.tar.gz -C ./.build kwild
           rm -rf ./.build/kwild
 
       - name: Build for Darwin ARM64
         run: |
-          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o ./.build/kwild ./cmd/kwild/main.go
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$LDFLAGS" -o ./.build/kwild ./cmd/kwild/main.go
           tar -czvf ./.build/tn_${{ env.VERSION }}_darwin_arm64.tar.gz -C ./.build kwild
           rm -rf ./.build/kwild
 
       - name: Build for Linux AMD64
         run: |
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ./.build/kwild ./cmd/kwild/main.go
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$LDFLAGS" -o ./.build/kwild ./cmd/kwild/main.go
+
+      # The runner can run only this binary; the other three take the same LDFLAGS.
+      - name: Check that kwild reports the release version
+        run: |
+          got=$(./.build/kwild version --output json | jq -r '.result.version')
+          if [ "$got" != "$VERSION" ]; then
+            echo "::error::kwild version prints '$got', but the release is '$VERSION'"
+            exit 1
+          fi
+          got=$(./.build/kwild --version)
+          if [ "$got" != "kwild version $VERSION" ]; then
+            echo "::error::kwild --version prints '$got', but the release is '$VERSION'"
+            exit 1
+          fi
+          echo "kwild reports $VERSION"
+
+      - name: Package Linux AMD64
+        run: |
           tar -czvf ./.build/tn_${{ env.VERSION }}_linux_amd64.tar.gz -C ./.build kwild
           rm -rf ./.build/kwild
 
       - name: Build for Linux ARM64
         run: |
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o ./.build/kwild ./cmd/kwild/main.go
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$LDFLAGS" -o ./.build/kwild ./cmd/kwild/main.go
           tar -czvf ./.build/tn_${{ env.VERSION }}_linux_arm64.tar.gz -C ./.build kwild
           rm -rf ./.build/kwild
 
