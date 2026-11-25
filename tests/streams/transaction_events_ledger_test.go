@@ -403,13 +403,14 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 		require.Equal(t, insertLeaderAddr, insertLeaderReceivedRows[0].DistributionRecipient)
 		require.Equal(t, feeHalfTRUF, insertLeaderReceivedRows[0].DistributionAmount)
 
+		// The bonus recipient is named only by the distribution row written
+		// above. record_transaction_event (027) writes no such row: its one
+		// distribution row goes to the event's fee_recipient. Fee history by
+		// wallet (065) reads the event's caller and fee_recipient, so it does
+		// not list this event for the bonus recipient.
 		bonusReceivedRows, err := fetchTransactionFees(ctx, platform, actor.Address(), bonusRecipientLower, "received")
 		require.NoError(t, err)
-		require.Len(t, bonusReceivedRows, 1)
-		require.Equal(t, insertTx, bonusReceivedRows[0].TxID)
-		require.Equal(t, insertLeaderAddr, bonusReceivedRows[0].FeeRecipient)
-		require.Equal(t, bonusRecipientLower, bonusReceivedRows[0].DistributionRecipient)
-		require.Equal(t, feeHalfTRUF, bonusReceivedRows[0].DistributionAmount)
+		require.Empty(t, bonusReceivedRows)
 
 		lastTxRows, err := fetchLastTransactions(ctx, platform, actor.Address(), userLower, int64(len(expected)))
 		require.NoError(t, err)
@@ -422,17 +423,7 @@ func runTransactionEventsLedgerScenario(t *testing.T) func(ctx context.Context, 
 
 		bonusHistoryRows, err := fetchLastTransactions(ctx, platform, actor.Address(), bonusRecipientLower, 10)
 		require.NoError(t, err)
-		require.NotEmpty(t, bonusHistoryRows)
-		foundBonus := false
-		for _, row := range bonusHistoryRows {
-			if row.DistributionRecipient == bonusRecipientLower {
-				require.Equal(t, insertTx, row.TxID)
-				require.Equal(t, feeHalfTRUF, row.DistributionAmount)
-				foundBonus = true
-				break
-			}
-		}
-		require.True(t, foundBonus, "expected to find distribution row for bonus recipient")
+		require.Empty(t, bonusHistoryRows)
 
 		for txID, exp := range expected {
 			eventRow, err := fetchTransactionEvent(ctx, platform, actor.Address(), txID)
