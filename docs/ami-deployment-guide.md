@@ -260,19 +260,47 @@ sudo systemctl status tn-node
 
 ### Updates
 
+The node runs the release in `TN_NODE_TAG` in `/opt/tn/.env`. A new node runs the release the AMI was built with. To install another release, pass its tag from the [release page](https://github.com/trufnetwork/node/releases):
+
 ```bash
-# Update to latest Docker images
+# Run release v2.6.9: set TN_NODE_TAG, pull the image and recreate the node containers
+sudo tn-node-update v2.6.9
+
+# Without a tag, pull the release the node runs now
 sudo tn-node-update
 
-# Manual update process
-cd /opt/tn
-sudo -u tn docker compose pull
-sudo -u tn docker compose up -d --force-recreate
+# The release set in .env (the file is readable by the tn user only)
+sudo grep TN_NODE_TAG /opt/tn/.env
+
+# The image and release the running node container uses
+docker inspect --format '{{ .Config.Image }} {{ index .Config.Labels "org.opencontainers.image.version" }}' tn-node
 
 # Check status after update
 sudo systemctl status tn-node
 docker ps
 ```
+
+`tn-node-update` pulls the image before it changes `.env`, so a tag that has no image leaves the node as it was. Postgres and the MCP server keep running, and the node restarts only when its image or configuration changed. When a release is required by a block, install it before that block; see [Required In-Place Upgrade](node-upgrade-guide.md#required-in-place-upgrade).
+
+#### Nodes From an Older AMI
+
+An AMI built before `tn-node-update` took a tag has no `/opt/tn/ami-node-tag` file. Its compose file names a fixed node image tag, `latest` on most builds, and its update command takes no tag: it pulls every image in the compose file, Postgres included, and recreates the containers. That command is `tn-node-update`, or `update-node` on the earliest builds. To make such a node run a release tag, change it once. This keeps `.env`, the node key and the data:
+
+```bash
+cd /opt/tn
+# 1. The release to run, here v2.6.9
+echo 'TN_NODE_TAG=v2.6.9' | sudo tee -a .env > /dev/null
+# 2. Pull it; if the tag has no image, stop here and fix the tag in .env
+sudo -u tn docker pull ghcr.io/trufnetwork/node:v2.6.9
+# 3. Read the node image from TN_NODE_TAG instead of latest
+sudo sed -i 's|\(image: ghcr.io/trufnetwork/node:\).*|\1${TN_NODE_TAG:?set TN_NODE_TAG in /opt/tn/.env}|' docker-compose.yml
+# 4. Recreate the node containers; Postgres and the MCP server keep running
+sudo -u tn docker compose up -d tn-node
+```
+
+To move such a node to another release later, change the tag in `.env` (`sudo sed -i 's/^TN_NODE_TAG=.*/TN_NODE_TAG=v2.7.0/' /opt/tn/.env`), then repeat steps 2 and 4 with that tag. Do not run its old update command. Its `tn-node-configure` rewrites `.env` without `TN_NODE_TAG`; if you run it, add the line back, or the node does not start.
+
+If its `docker-compose.yml` has no `tn-postgres-roles` service, the node connects to Postgres as a `kwild` role that is a superuser, and these steps leave that as it is. To move it off that role, see [Moving an Existing Node Off the Superuser Role](node-operator-guide.md#moving-an-existing-node-off-the-superuser-role).
 
 ## Troubleshooting
 

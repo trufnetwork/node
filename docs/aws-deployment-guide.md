@@ -519,10 +519,10 @@ sudo apt update && sudo apt upgrade -y
 
 **If using AMI deployment**:
 ```bash
-# Update Docker images
-sudo tn-node-update
-# Or manually: cd /opt/tn && sudo -u tn docker compose pull && sudo systemctl restart tn-node
+# Install a node release by its tag from https://github.com/trufnetwork/node/releases
+sudo tn-node-update v2.6.9
 ```
+See [Updates](ami-deployment-guide.md#updates) in the AMI guide.
 
 **If using manual setup**:
 ```bash

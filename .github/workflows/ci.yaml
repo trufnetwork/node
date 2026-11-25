@@ -53,7 +53,17 @@ jobs:
         with:
           node-version: '20'
       - name: Run infra tests
-        run: go test -count=1 ./config/ ./config/node/ ./lib/tn/ ./lib/constructs/validator_set/
+        run: go test -count=1 ./config/ ./config/node/ ./lib/tn/ ./lib/constructs/validator_set/ ./stacks/
+
+  # Tests the check that release.yaml and publish-node-image.yaml run on each
+  # release page.
+  release-upgrade-line:
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.pull_request.draft }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test the upgrade line check
+        run: scripts/release/test-check-upgrade-line.sh
 
   acceptance-test:
     runs-on: ubuntu-latest

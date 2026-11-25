@@ -3,6 +3,9 @@ package stacks
 import (
 	_ "embed"
 	"encoding/base64"
+	"fmt"
+	"regexp"
+
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsimagebuilder"
@@ -15,8 +18,42 @@ import (
 //go:embed docker-compose.template.yml
 var dockerComposeTemplate string
 
-func getEncodedDockerCompose() string {
-	return base64.StdEncoding.EncodeToString([]byte(dockerComposeTemplate))
+//go:embed ami-scripts/tn-node-configure.sh
+var tnNodeConfigureScript string
+
+//go:embed ami-scripts/tn-node-update.sh
+var tnNodeUpdateScript string
+
+// encode returns a file as base64, for a component command to write it.
+func encode(file string) string {
+	return base64.StdEncoding.EncodeToString([]byte(file))
+}
+
+// contextNodeTag is the CDK context value that names the node release an AMI
+// is built with, such as v2.6.8. The AMI writes it to /opt/tn/ami-node-tag,
+// and tn-node-configure copies it to TN_NODE_TAG in /opt/tn/.env.
+const contextNodeTag = "nodeTag"
+
+// nodeTagPattern is a Docker image tag. tn-node-update checks its argument
+// with the same pattern.
+var nodeTagPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
+
+// validateNodeTag accepts the image tag of a node release and refuses latest,
+// so that an AMI runs the release it was built with.
+func validateNodeTag(tag string) error {
+	if tag == "latest" || !nodeTagPattern.MatchString(tag) {
+		return fmt.Errorf("%q is not a node release tag such as v2.6.8", tag)
+	}
+	return nil
+}
+
+func amiNodeTag(scope constructs.Construct) string {
+	tag, _ := scope.Node().TryGetContext(jsii.String(contextNodeTag)).(string)
+	if err := validateNodeTag(tag); err != nil {
+		panic(fmt.Sprintf("context variable '%s': %v. Pass the release the AMI runs, for example -c %s=v2.6.8",
+			contextNodeTag, err, contextNodeTag))
+	}
+	return tag
 }
 
 type AmiPipelineStackProps struct {
@@ -24,15 +61,16 @@ type AmiPipelineStackProps struct {
 }
 
 type AmiPipelineStackExports struct {
-	PipelineArn         string
-	DockerComponentArn  string
-	ConfigComponentArn  string
-	WelcomeComponentArn string
-	RecipeArn           string
-	InfraConfigArn      string
-	DistributionArn     string
-	S3BucketName        string
-	InstanceProfileArn  string
+	PipelineArn          string
+	DockerComponentArn   string
+	ConfigComponentArn   string
+	CommandsComponentArn string
+	WelcomeComponentArn  string
+	RecipeArn            string
+	InfraConfigArn       string
+	DistributionArn      string
+	S3BucketName         string
+	InstanceProfileArn   string
 }
 
 func AmiPipelineStack(scope constructs.Construct, id string, props *AmiPipelineStackProps) (awscdk.Stack, AmiPipelineStackExports) {
@@ -48,6 +86,7 @@ func AmiPipelineStack(scope constructs.Construct, id string, props *AmiPipelineS
 
 	stage := config.GetStage(stack)
 	devPrefix := config.GetDevPrefix(stack)
+	nodeTag := amiNodeTag(stack)
 
 	// Helper function to construct names with dev prefix
 	nameWithPrefix := func(name string) string {
@@ -210,9 +249,17 @@ phases:
         inputs:
           commands:
             - |
-              echo "` + getEncodedDockerCompose() + `" | base64 -d > /opt/tn/docker-compose.yml
+              echo "` + encode(dockerComposeTemplate) + `" | base64 -d > /opt/tn/docker-compose.yml
             - sudo chown tn:tn /opt/tn/docker-compose.yml
             - sudo chmod 644 /opt/tn/docker-compose.yml
+
+      # The node release the AMI runs until tn-node-update moves it.
+      - name: WriteNodeTag
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo "` + nodeTag + `" | sudo tee /opt/tn/ami-node-tag > /dev/null
+            - sudo chown tn:tn /opt/tn/ami-node-tag
 
       - name: CreateSystemdService
         action: ExecuteBash
@@ -238,86 +285,6 @@ phases:
               WantedBy=multi-user.target
               EOF
 
-      - name: CreateConfigurationScript
-        action: ExecuteBash
-        inputs:
-          commands:
-            - |
-              sudo tee /usr/local/bin/tn-node-configure > /dev/null << 'EOF'
-              #!/bin/bash
-              set -e
-              PRIVATE_KEY=""
-              ENABLE_MCP=false
-              NETWORK=""
-              while [[ $# -gt 0 ]]; do
-                case $1 in
-                  --private-key) PRIVATE_KEY="$2"; shift 2;;
-                  --enable-mcp) ENABLE_MCP=true; shift;;
-                  --network) NETWORK="$2"; shift 2;;
-                  *) echo "Unknown option"; exit 1;;
-                esac
-              done
-              RECONFIGURE=false
-              [ -f /opt/tn/.env ] && RECONFIGURE=true
-              if [ -n "$NETWORK" ]; then
-                CHAIN_ID="$NETWORK"
-                NETWORK_TYPE="custom"
-              else
-                CHAIN_ID="tn-v2.1"
-                NETWORK_TYPE="mainnet"
-              fi
-              cd /opt/tn
-              if [ "$RECONFIGURE" = true ]; then
-                [ -n "$PRIVATE_KEY" ] && { echo "Error: Cannot change key"; exit 1; }
-                [ -n "$NETWORK" ] && { echo "Error: Cannot change network"; exit 1; }
-                grep -q "TN_PRIVATE_KEY=" .env && EXISTING_KEY=$(grep "TN_PRIVATE_KEY=" .env | cut -d'=' -f2)
-                grep -q "CHAIN_ID=" .env && CHAIN_ID=$(grep "CHAIN_ID=" .env | cut -d'=' -f2)
-                grep -q "NETWORK_TYPE=" .env && NETWORK_TYPE=$(grep "NETWORK_TYPE=" .env | cut -d'=' -f2)
-                sudo systemctl stop tn-node || true
-                sudo -u tn docker compose down || true
-              fi
-              cat > .env << ENVEOF
-              CHAIN_ID=$CHAIN_ID
-              NETWORK_TYPE=$NETWORK_TYPE
-              ENVEOF
-              [ "$ENABLE_MCP" = true ] && echo "COMPOSE_PROFILES=mcp" >> .env
-              if [ "$RECONFIGURE" = false ] && [ -n "$PRIVATE_KEY" ]; then
-                echo "TN_PRIVATE_KEY=$PRIVATE_KEY" >> .env
-              elif [ "$RECONFIGURE" = true ] && [ -n "$EXISTING_KEY" ]; then
-                echo "TN_PRIVATE_KEY=$EXISTING_KEY" >> .env
-              fi
-              sudo chown tn:tn .env
-              sudo chmod 600 .env
-              sudo systemctl daemon-reload
-              sudo systemctl enable tn-node
-              sudo systemctl start tn-node
-              MAX_WAIT=60
-              ELAPSED=0
-              while [ $ELAPSED -lt $MAX_WAIT ]; do
-                sudo -u tn docker compose ps --status running 2>/dev/null | grep -q tn-node && break
-                sleep 2
-                ELAPSED=$((ELAPSED + 2))
-              done
-              echo "Done. Status: $(sudo systemctl is-active tn-node)"
-              [ "$ENABLE_MCP" = true ] && echo "MCP: http://$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-ipv4 || echo localhost):8000/sse"
-              EOF
-            - sudo chmod +x /usr/local/bin/tn-node-configure
-
-      - name: CreateUpdateScript
-        action: ExecuteBash
-        inputs:
-          commands:
-            - |
-              sudo tee /usr/local/bin/tn-node-update > /dev/null << 'EOF'
-              #!/bin/bash
-              set -e
-              cd /opt/tn
-              sudo -u tn docker compose pull
-              sudo -u tn docker compose up -d --force-recreate
-              echo "Updated: $(sudo systemctl is-active tn-node)"
-              EOF
-            - sudo chmod +x /usr/local/bin/tn-node-update
-
       - name: PrepareServices
         action: ExecuteBash
         inputs:
@@ -326,7 +293,39 @@ phases:
 `),
 	})
 
-	// Component 2: Welcome messages (split to stay under 16KB limit)
+	// Component 2: the tn-node-configure and tn-node-update commands (split to stay under 16KB limit)
+	commandsComponent := awsimagebuilder.NewCfnComponent(stack, jsii.String("TNCommandsComponent"), &awsimagebuilder.CfnComponentProps{
+		Name:        jsii.String(nameWithPrefix("tn-commands-setup-" + string(stage))),
+		Platform:    jsii.String("Linux"),
+		Version:     jsii.String("1.0.0"),
+		Description: jsii.String("Install the TRUF.NETWORK node configure and update commands"),
+		Data: jsii.String(`
+name: TNCommandsComponent
+description: Install the TRUF.NETWORK node configure and update commands
+schemaVersion: 1.0
+
+phases:
+  - name: build
+    steps:
+      - name: CreateConfigurationScript
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              echo "` + encode(tnNodeConfigureScript) + `" | base64 -d | sudo tee /usr/local/bin/tn-node-configure > /dev/null
+            - sudo chmod +x /usr/local/bin/tn-node-configure
+
+      - name: CreateUpdateScript
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              echo "` + encode(tnNodeUpdateScript) + `" | base64 -d | sudo tee /usr/local/bin/tn-node-update > /dev/null
+            - sudo chmod +x /usr/local/bin/tn-node-update
+`),
+	})
+
+	// Component 3: Welcome messages (split to stay under 16KB limit)
 	welcomeComponent := awsimagebuilder.NewCfnComponent(stack, jsii.String("TNWelcomeComponent"), &awsimagebuilder.CfnComponentProps{
 		Name:        jsii.String(nameWithPrefix("tn-welcome-setup-" + string(stage))),
 		Platform:    jsii.String("Linux"),
@@ -367,8 +366,8 @@ phases:
 
               After configuration, your node will start automatically and begin syncing!
 
-              📦 To update to the latest software:
-              sudo tn-node-update
+              📦 To install a node release, pass its tag from https://github.com/trufnetwork/node/releases:
+              sudo tn-node-update <release tag>
 
               🔒 Security Group Ports:
               - Port 6600 (P2P): Recommended for two-way peer connections
@@ -408,8 +407,8 @@ phases:
                 echo ""
                 echo "After configuration, your node will start automatically and begin syncing!"
                 echo ""
-                echo "📦 To update to the latest software:"
-                echo "sudo tn-node-update"
+                echo "📦 To install a node release, pass its tag from https://github.com/trufnetwork/node/releases:"
+                echo "sudo tn-node-update <release tag>"
                 echo ""
                 echo "🔒 Security Group Ports:"
                 echo "- Port 6600 (P2P): Recommended for two-way peer connections"
@@ -440,6 +439,9 @@ phases:
 			},
 			{
 				ComponentArn: configComponent.AttrArn(),
+			},
+			{
+				ComponentArn: commandsComponent.AttrArn(),
 			},
 			{
 				ComponentArn: welcomeComponent.AttrArn(),
@@ -502,15 +504,16 @@ phases:
 	})
 
 	exports := AmiPipelineStackExports{
-		PipelineArn:         *imagePipeline.AttrArn(),
-		DockerComponentArn:  *dockerComponent.AttrArn(),
-		ConfigComponentArn:  *configComponent.AttrArn(),
-		WelcomeComponentArn: *welcomeComponent.AttrArn(),
-		RecipeArn:           *imageRecipe.AttrArn(),
-		InfraConfigArn:      *infraConfig.AttrArn(),
-		DistributionArn:     *distributionConfig.AttrArn(),
-		S3BucketName:        *artifactsBucket.BucketName(),
-		InstanceProfileArn:  *instanceProfile.AttrArn(),
+		PipelineArn:          *imagePipeline.AttrArn(),
+		DockerComponentArn:   *dockerComponent.AttrArn(),
+		ConfigComponentArn:   *configComponent.AttrArn(),
+		CommandsComponentArn: *commandsComponent.AttrArn(),
+		WelcomeComponentArn:  *welcomeComponent.AttrArn(),
+		RecipeArn:            *imageRecipe.AttrArn(),
+		InfraConfigArn:       *infraConfig.AttrArn(),
+		DistributionArn:      *distributionConfig.AttrArn(),
+		S3BucketName:         *artifactsBucket.BucketName(),
+		InstanceProfileArn:   *instanceProfile.AttrArn(),
 	}
 
 	return stack, exports

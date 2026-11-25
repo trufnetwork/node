@@ -46,6 +46,8 @@ Steps and best practices for upgrading TN nodes:
 
 [Node Upgrade Guide](./docs/node-upgrade-guide.md)
 
+Each release page opens with a line that says whether your node must install the release and by which block. To get release notices, choose **Watch → Custom → Releases** on this repository. Maintainers publish releases as described in the [Release Process](./docs/release-process.md).
+
 
 ## SDKs
 

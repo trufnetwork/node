@@ -38,7 +38,7 @@ TESTS_FAILED=0
 # Test 1: CDK Synthesis
 echo "1. Testing CDK synthesis..."
 cd deployments/infra
-if cdk --app 'go run ami-cdk.go' synth --context stage=dev --context devPrefix=test > /dev/null 2>&1; then
+if cdk --app 'go run ami-cdk.go' synth --context stage=dev --context devPrefix=test --context nodeTag=v2.6.8 > /dev/null 2>&1; then
     echo -e "${GREEN}✅ CDK synthesis successful${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else
@@ -109,6 +109,7 @@ cp deployments/infra/stacks/docker-compose.template.yml /tmp/test-docker-compose
 
 # Create dummy .env file for validation (docker-compose expects it)
 cat > /tmp/.env << 'EOF'
+TN_NODE_TAG=v2.6.8
 CHAIN_ID=tn-v2.1
 NETWORK_TYPE=mainnet
 EOF
@@ -404,6 +405,7 @@ cp deployments/infra/stacks/docker-compose.template.yml /tmp/tn-test-compose.yml
 
 # Create .env file in same directory (docker-compose expects .env relative to compose file)
 cat > /tmp/.env << 'EOF'
+TN_NODE_TAG=v2.6.8
 CHAIN_ID=tn-v2.1
 NETWORK_TYPE=mainnet
 EOF
@@ -445,15 +447,15 @@ rm -f /tmp/tn-test-compose.yml /tmp/.env
 
 # Test 10: Update Script Workflow
 echo "10. Testing update script workflow..."
-echo "Simulating the always-latest container update workflow..."
+echo "Simulating the tagged container update workflow (go test ./stacks/ runs the real script)..."
 
 cat > /tmp/tn-update-test.sh << 'EOF'
 #!/bin/bash
 set -e
 
-echo "🔄 Updating TrufNetwork node to latest version..."
+echo "🔄 Updating TrufNetwork node to release v2.6.9..."
 
-echo "📦 Pulling latest images..."
+echo "📦 Pulling the release image..."
 # Detect Docker Compose command
 if docker compose version >/dev/null 2>&1; then
     COMPOSE="docker compose"
@@ -465,15 +467,12 @@ else
 fi
 
 echo "✓ Using $COMPOSE"
-echo "✓ Simulated pulling ghcr.io/trufnetwork/node:latest"
-echo "✓ Simulated pulling ghcr.io/trufnetwork/kwil-postgres:16.8-1"
-echo "✓ Simulated pulling ghcr.io/trufnetwork/postgres-mcp:latest"
+echo "✓ Simulated pulling ghcr.io/trufnetwork/node:v2.6.9"
+echo "✓ Simulated setting TN_NODE_TAG=v2.6.9 in /opt/tn/.env"
 
-echo "🔄 Restarting services..."
-echo "✓ Stopping existing containers"
-echo "✓ Starting containers with latest images"
-echo "✅ Services updated to latest version!"
-echo "All containers are now running the latest images."
+echo "🔄 Recreating the node containers..."
+echo "✓ Postgres and MCP keep running"
+echo "✅ tn-node runs ghcr.io/trufnetwork/node:v2.6.9"
 EOF
 
 chmod +x /tmp/tn-update-test.sh
