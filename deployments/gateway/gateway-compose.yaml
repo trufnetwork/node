@@ -32,7 +32,11 @@ services:
         target: /app/kgw-config.pkl
     logging:
       driver: "json-file"
+      # keep at least a day: a busy gateway writes about 200 MB an hour, and
+      # compressed rotated files take about 5 MB each, so 72 files hold
+      # about 30 hours in about 0.5 GB of disk
       options:
         max-size: "100m"
-        max-file: "2"
+        max-file: "72"
+        compress: "true"
         tag: "{{.Name}}"
