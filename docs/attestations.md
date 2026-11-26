@@ -94,11 +94,11 @@ A market asks one question about a stream at time T: is the value above a thresh
 How each one finds the record it answers on:
 
 - **Old value actions (6, 7, 8)** read the newest record stamped in the day before T. With none there, they read the newest record before that, however old. With no record at or before T, every capture fails, so the market never settles and its collateral stays locked. They answer YES or NO only.
-- **The old index change action (12)** needs the index at T, from a record no more than a day old, and at T minus the interval. Without either one, every capture fails in the same way.
+- **The old index change action (12)** needs the index at T, from a record no more than a day old, and at T minus the interval, from a record no more than one interval older than that. Without either one, every capture fails in the same way.
 - **New value actions (14, 15, 16)** read only the newest record stamped within `[T - tolerance, T]`, with the tolerance set by the market.
 - **The new index change action (13)** reads the first record stamped within `[T, T + tolerance]`, and the record nearest to one interval before it, at most the tolerance away.
 - **All four new actions** retry the capture while a record they need is missing. A capture taken from block time `T + W` that still finds none answers INVALID, and the market is refunded: every share is paid $0.50 and open buy orders are returned. The new index change action (13) also answers INVALID from T, without waiting, when its prior record's value is 0.
-- **Range bounds differ.** `value_in_range` (8) counts both bounds as inside, `[min, max]`, and needs both. `value_in_range_v2` (16) counts min but not max, `[min, max)`, and a NULL bound leaves that side open. With the same bounds, a value equal to max answers YES on 8 and NO on 16.
+- **Range bounds differ.** `value_in_range` (8) counts both bounds as inside, `[min, max]`, and needs both. `value_in_range_v2` (16) counts min but not max, `[min, max)`, and a NULL bound leaves that side open. With the same bounds and min below max, a value equal to max answers YES on 8 and NO on 16. Equal bounds are allowed on 8, and 16 refuses them.
 
 So an old value market can settle on an older record when the one it waits for is late, and an old market never settles when the stream has no record it accepts. A new market settles only on records inside its tolerance, and is refunded when its first capture from `T + W` still finds none. On a new value action, a stream that stamps its records more than the tolerance before T reads as having no record, even where an old action finds the same record through its fallback. A market on such a stream needs a tolerance that reaches back to the stamp, up to 45 days.
 
